@@ -834,6 +834,25 @@ class FrontendStaticCase(unittest.TestCase):
         self.assertIn("/app.js", html)
         self.assertIn("/styles.css", html)
 
+    def test_selected_attack_script_has_a_visible_style(self):
+        """攻防演示台选中剧本时必须有可见反馈。
+
+        这个 bug 曾经真实出现过：JS 老老实实加了 active 类，但 CSS 里没有对应的
+        规则，于是点按钮毫无反应。用测试把两边钉在一起。
+        """
+        css = (ROOT / "frontend" / "styles.css").read_text(encoding="utf-8")
+        js = (ROOT / "frontend" / "app.js").read_text(encoding="utf-8")
+        self.assertIn(".chips .ghost.active", css, "选中态缺少样式，点了不会有反馈")
+        self.assertIn("dataset.scriptId", js, "按钮需要用 scriptId 标记，不能靠文案前缀匹配")
+        self.assertIn("aria-pressed", js)
+
+    def test_selected_style_actually_darkens_the_button(self):
+        """用户要求的反馈形式是「按钮颜色变深」。"""
+        css = (ROOT / "frontend" / "styles.css").read_text(encoding="utf-8")
+        block = css.split(".chips .ghost.active")[1].split("}")[0]
+        self.assertIn("background", block)
+        self.assertIn("--brand-dark", block)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

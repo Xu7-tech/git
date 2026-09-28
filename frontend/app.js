@@ -518,6 +518,9 @@ async function loadScripts() {
     const b = document.createElement("button");
     b.className = "ghost";
     b.textContent = `${s.id} ${s.name}`;
+    b.dataset.scriptId = s.id;
+    b.setAttribute("aria-pressed", "false");
+    b.title = s.expected;
     b.onclick = () => runScript(s.id);
     box.appendChild(b);
   });
@@ -525,10 +528,19 @@ async function loadScripts() {
   if (data.scripts.length) runScript(data.scripts[0].id);
 }
 
+let runningScript = null;
 async function runScript(id) {
+  if (runningScript === id) return;          // 同一剧本不重复触发
+  runningScript = id;
   const box = $("scriptChips");
-  box.querySelectorAll("button").forEach((b) =>
-    b.classList.toggle("active", b.textContent.startsWith(id)));
+  const buttons = [...box.querySelectorAll("button")];
+  buttons.forEach((b) => {
+    const on = b.dataset.scriptId === id;
+    b.classList.toggle("active", on);
+    b.setAttribute("aria-pressed", String(on));
+  });
+  const current = buttons.find((b) => b.dataset.scriptId === id);
+  current?.classList.add("loading");
   try {
     const r = await post("/demo/attack", { script_id: id });
     renderTrace($("traceVuln"), r.vulnerable.trace);
@@ -542,7 +554,12 @@ async function runScript(id) {
     $("verdictBox").hidden = false;
     $("verdictText").textContent = `${r.verdict}　（${r.script.name}）`;
     $("verdictExpect").textContent = "防御预期：" + r.script.expected;
-  } catch (err) { toast("运行失败：" + err.message); }
+  } catch (err) {
+    toast("运行失败：" + err.message);
+  } finally {
+    current?.classList.remove("loading");
+    runningScript = null;
+  }
 }
 
 function renderTrace(host, trace) {

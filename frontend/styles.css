@@ -137,6 +137,19 @@ button { font-family: inherit; cursor: pointer; }
 .composer input { flex: 1; font-size: 1.05em; padding: 14px 16px; }
 .chips { display: flex; flex-wrap: wrap; gap: 10px; }
 .chips .ghost { font-size: .9em; white-space: normal; text-align: left; max-width: 100%; }
+.chips .ghost:hover { border-color: var(--brand); background: #f4f8ff; }
+.chips .ghost:active { transform: translateY(1px); }
+/* 攻防演示台：当前正在演示的剧本 —— 底色压深、反白，和未选中的白底按钮拉开差距 */
+.chips .ghost.active {
+  background: var(--brand-dark);
+  border-color: var(--brand-dark);
+  color: #fff;
+  font-weight: 700;
+  box-shadow: 0 3px 10px rgba(18, 63, 134, .28);
+}
+.chips .ghost.active:hover { background: #0d2f66; border-color: #0d2f66; }
+/* 运行中：压暗并禁止重复点击 */
+.chips .ghost.loading { opacity: .65; cursor: progress; }
 
 .response-text { font-size: 1.18em; line-height: 1.85; }
 .response-actions { display: flex; gap: 12px; flex-wrap: wrap; }

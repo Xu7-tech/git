@@ -128,7 +128,7 @@ python -m uvicorn backend.main:app --host 127.0.0.1 --port 8077
 ## 测试
 
 ```bash
-python -m unittest discover -s tests -v    # 105 项自动化测试
+python -m unittest discover -s tests -v    # 107 项自动化测试
 python scripts/evaluate.py                 # 评测指标
 ```
 
@@ -189,7 +189,7 @@ scripts/      评测脚本 evaluate.py、PPT 生成器 make_ppt.py
 docs/         技术方案、场景覆盖表、安全测试用例、演示截图手册、架构图
 reports/      评测指标结果（JSON + Markdown）
 deliverables/ 作品介绍 PPT
-tests/        105 项验收测试 + 端到端 HTTP 冒烟测试
+tests/        107 项验收测试 + 端到端 HTTP 冒烟测试
 ```
 
 ---
