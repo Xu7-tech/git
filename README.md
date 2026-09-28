@@ -47,6 +47,90 @@ python -m uvicorn backend.main:app --host 127.0.0.1 --port 8077
 
 ---
 
+## AI 能力与模型接入
+
+系统的**意图理解与任务规划由大模型驱动**，规则引擎只负责资金风控。把"读懂人话"交给模型、
+把"能不能放行"交给确定性规则，是本项目的核心设计，而不是"用了模型却不敢让它碰钱"的妥协。
+
+| 环节 | 默认（未配置密钥） | 配置密钥后 | 代码位置 |
+|---|---|---|---|
+| **意图理解** | 确定性规则解析器 | **通义千问 qwen-plus** | `backend/nlu.py::parse_intent_llm` |
+| **任务规划** | Plan-and-Execute 规划器 | 同左（与模型解耦） | `backend/agent.py::build_plan` |
+| **幻觉拦截** | 槽位一致性校验 | 同左 | `backend/nlu.py::verify_consistency` |
+| **资金风控** | 规则引擎 L0–L3（**刻意不使用模型**） | 同左 | `backend/risk.py::evaluate` |
+| 语音识别 | 浏览器原生识别（Edge / Chrome，支持粤语） | 同左，另可通过 `/asr` 接口接云端 | `backend/voice.py::transcribe` |
+| 语音合成 | 浏览器语音合成 | **讯飞在线合成 TTS** | `backend/voice.py::_provider_tts` |
+
+### 为什么默认走降级模式
+
+演示现场未必有网络，而银行资金类操作不能因为网络抖一下就走不通。因此系统**默认零依赖即可完整运行**，
+配置密钥后自动切换到云端模型 —— 这是可用性设计，不代表系统不含 AI 能力。
+大模型在链路中的位置见下一节「系统架构」。
+
+### 配置通义千问（启用 LLM 意图理解）
+
+1. 在阿里云百炼控制台 <https://bailian.console.aliyun.com> 创建 API-KEY；
+2. 启动前设置环境变量：
+
+   ```powershell
+   $env:DASHSCOPE_API_KEY = "sk-你的密钥"
+   $env:LLM_MODEL = "qwen-plus"     # 可选，默认即 qwen-plus
+   .\run.ps1
+   ```
+
+   ```bash
+   export DASHSCOPE_API_KEY=sk-你的密钥
+   ./run.sh
+   ```
+
+**怎么确认已经生效**：访问 <http://127.0.0.1:8077/system/status>，看到
+
+```json
+{ "llm_provider": "qwen(通义千问)", "llm_live": true, "degraded_mode": false }
+```
+
+老人端顶栏的黄色胶囊也会从「降级模式运行（规则引擎 + 浏览器语音）」变成「LLM 在线 · 供应商」。
+
+### 大模型在链路里的位置
+
+```
+语音 / 文字
+   ↓
+意图理解 ── 通义千问（或未配置时的规则解析器）→ 结构化槽位 {intent, amount, payee}
+   ↓
+一致性校验 ── 槽位必须能在用户原话里找到，对不上即中止或回落规则解析（防幻觉）
+   ↓
+任务规划 ── Plan-and-Execute 拆解步骤，生成老人能听懂的复述文本
+   ↓
+规则引擎 ── L0–L3 权限裁定（模型无权参与）
+   ↓
+复述确认 → 执行落账 → 审计留痕
+```
+
+**LLM 只做语义解析，不持有任何资金接口调用权。** 即使模型返回了错误参数，
+`verify_consistency` 也会因为"槽位对不上用户原话"而拦截并回落到规则解析 ——
+这条防线有 5 条专项测试盯着（见 [安全测试用例](docs/安全测试用例.md) 第三节）。
+
+### 配置讯飞语音合成（可选）
+
+在讯飞开放平台 <https://console.xfyun.cn> 创建应用并开通「在线语音合成」，然后：
+
+```powershell
+$env:XFYUN_APP_ID      = "你的APPID"
+$env:XFYUN_TTS_KEY     = "你的APIKey"
+$env:XFYUN_TTS_SECRET  = "你的APISecret"
+$env:XFYUN_TTS_VCN     = "xiaoyan"      # 音色；粤语需填账号可用的粤语音色
+```
+
+前端每次播报会先请求 `/tts`，拿到云端音频就播放，否则退回浏览器合成 —— 云端异常不会中断演示。
+
+> **关于语音识别的说明**：随仓库提供的 Web 界面用浏览器原生识别采集语音（Edge / Chrome，
+> `zh-CN` 与 `zh-HK` 两条通道，粤语可用），不依赖外部服务。
+> `POST /asr` 接口同时提供讯飞语音听写通道（`accent=cantonese` 走粤语），
+> 适合接入自有客户端或行方 App；需要在浏览器里直接走云端识别，可在此基础上接一段录音上传。
+
+---
+
 ## 系统架构
 
 ![系统架构](docs/images/architecture.svg)
@@ -194,18 +278,19 @@ tests/        107 项验收测试 + 端到端 HTTP 冒烟测试
 
 ---
 
-## 接入真实模型与云语音
+## 供应商可替换性
 
-两个适配器各自只有一个接入点，替换不影响其余代码：
+三处云端能力的接入点各只有一处，替换供应商不影响其余代码：
 
-| 能力 | 接入位置 | 环境变量 |
+| 能力 | 唯一接入点 | 当前实现 |
 |---|---|---|
-| 意图理解 | `backend/nlu.py::parse_intent_llm`（通义千问 OpenAI 兼容接口） | `DASHSCOPE_API_KEY`、`LLM_MODEL` |
-| 语音识别 | `backend/voice.py::_provider_stt`（讯飞语音听写，`accent=cantonese` 走粤语通道） | `XFYUN_APP_ID`、`XFYUN_API_KEY`、`XFYUN_API_SECRET` |
-| 语音合成 | `backend/voice.py::_provider_tts`（讯飞在线合成） | `XFYUN_APP_ID`、`XFYUN_TTS_KEY`、`XFYUN_TTS_SECRET`、`XFYUN_TTS_VCN` |
+| 意图理解 | `backend/nlu.py::parse_intent_llm` | 通义千问（OpenAI 兼容接口），可换成任意同级模型 |
+| 语音识别 | `backend/voice.py::_provider_stt` | 讯飞语音听写 WebSocket 协议（`accent=cantonese` 走粤语通道） |
+| 语音合成 | `backend/voice.py::_provider_tts` | 讯飞在线语音合成 WebSocket 协议 |
 
-未配置时按上表自动降级，不报错；云端接口异常同样回落，不中断演示。
-即使 LLM 在线，其输出也必须通过 `verify_consistency` 与用户原话比对，不一致就回落到规则解析。
+讯飞的鉴权签名、音频分帧、结果解析均已实现并覆盖单元测试
+（`tests/test_acceptance.py::XfyunProtocolCase`）；未配置凭据时自动降级，不报错，
+云端接口异常同样回落，不中断演示。
 
 完整交互式接口文档：<http://127.0.0.1:8077/docs>
 
@@ -216,6 +301,7 @@ tests/        107 项验收测试 + 端到端 HTTP 冒烟测试
 - 业务数据全部来自**自建模拟银行核心**，未接入真实银行系统，答辩时应明确标注为模拟环境；
 - 方言目前真实支持粤语与普通话对比，其余方言作为可扩展项
   （扩展 `bank.ALIASES` 与 `nlu.CANTONESE_MARKERS` 即可）；
-- 云端 ASR / LLM 需要网络与凭据，未配置时走降级路径，该路径已完整验证；
+- 云端 LLM / TTS 需要网络与凭据，未配置时走降级路径，该路径已完整验证；
+  随仓库的 Web 界面用浏览器原生识别采集语音，`POST /asr` 的讯飞通道供自有客户端接入；
 - 作品介绍 PPT 与演示视频为最终成片，均已放入 `deliverables/`；
   PPT 内含 3 段内嵌录屏（63 MB 媒体，逐字节与源文件一致）。

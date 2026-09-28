@@ -82,6 +82,13 @@ class HttpSmokeCase(unittest.TestCase):
         self.assertFalse(status["llm_live"])
         self.assertTrue(status["degraded_mode"])
         self.assertEqual(status["auth_threshold"], 2000.0)
+        # 降级指的是"意图理解走本地规则解析器"，与语音通道无关 ——
+        # 曾经把它写成 LLM 与 ASR 都可用才为 false，配上大模型后仍报 true，会误导评审
+        self.assertEqual(status["llm_provider"], "rule-engine-fallback")
+        self.assertIn("规则解析器", status["ai_stack"]["意图理解"])
+        self.assertEqual(status["ai_stack"]["任务规划"], "Plan-and-Execute")
+        # Web 界面实际走浏览器识别，与 /asr 接口可用的通道分开报告
+        self.assertEqual(status["asr_in_use"], "browser-native-stt")
 
     def test_03_voice_endpoints_fall_back(self):
         asr = self.post("/asr", {"dialect": "cantonese"})

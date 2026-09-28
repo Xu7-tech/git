@@ -332,10 +332,17 @@ async function loadStatus() {
       <div class="kv"><span>专项锁定</span><b>¥ ${acc.locked.toLocaleString("zh-CN", { minimumFractionDigits: 2 })}</b></div>
       <div class="kv"><span>免密额度</span><b>¥ ${s.limits.free_limit}</b></div>
       <div class="kv"><span>子女授权门槛</span><b>¥ ${s.auth_threshold}</b></div>`;
-    $("statusPill").textContent = s.llm_live
-      ? `LLM 在线 · ${s.tts_provider}`
-      : "降级模式运行（规则引擎 + 浏览器语音）";
-    $("statusPill").className = "pill " + (s.llm_live ? "ok" : "warn");
+    // 这个胶囊说明的是「意图理解走哪条路」，不是「系统是不是 AI」——
+    // 未配置模型时走的是同样在架构里的本地规则解析器，且离线也能完整演示。
+    const pill = $("statusPill");
+    pill.textContent = s.llm_live
+      ? `意图理解：${s.llm_provider}`
+      : "意图理解：本地规则解析 · 离线可跑";
+    pill.className = "pill " + (s.llm_live ? "ok" : "warn");
+    pill.title = s.llm_live
+      ? "大模型已接入：意图理解走通义千问，其输出仍需通过与原话的一致性校验"
+      : "未配置 DASHSCOPE_API_KEY，意图理解走本地规则解析器。配置后自动切换到通义千问，"
+        + "详见 README「AI 能力与模型接入」一节。";
     $("freeLimit").value = s.limits.free_limit;
     $("limitsNote").textContent =
       `当前免密 ¥${s.limits.free_limit} · 单笔上限 ¥${s.limits.single_limit} · 单日上限 ¥${s.limits.daily_limit}`;

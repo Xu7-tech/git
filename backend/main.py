@@ -342,12 +342,28 @@ def get_audit(limit: int = 100):
 
 @app.get("/system/status", tags=["系统"])
 def system_status():
+    llm_live = nlu.llm_available()
+    cloud_asr = voice.stt_available()
+    cloud_tts = voice.tts_available()
     return {
-        "llm_provider": "qwen(通义千问)" if nlu.llm_available() else "rule-engine-fallback",
-        "llm_live": nlu.llm_available(),
-        "asr_provider": "xfyun-iat" if voice.stt_available() else "browser-native-stt",
-        "tts_provider": "xfyun-tts" if voice.tts_available() else "browser-speech-synthesis",
-        "degraded_mode": not (nlu.llm_available() and voice.stt_available()),
+        # 意图理解：系统的 AI 核心，是否走高模型
+        "llm_provider": "qwen(通义千问)" if llm_live else "rule-engine-fallback",
+        "llm_live": llm_live,
+        # /asr 接口可用的通道 vs 随仓库的 Web 界面实际走的通道
+        "asr_provider": "xfyun-iat" if cloud_asr else "browser-native-stt",
+        "asr_in_use": "browser-native-stt",
+        "tts_provider": "xfyun-tts" if cloud_tts else "browser-speech-synthesis",
+        # 只表示"意图理解是否降级为规则解析器"，此前把它写成 LLM 与 ASR 都可用才为 false，
+        # 而浏览器界面并不经过云端 ASR，导致配上大模型后这个字段仍然是 true，容易让人误判。
+        "degraded_mode": not llm_live,
+        "ai_stack": {
+            "意图理解": "通义千问" if llm_live else "本地规则解析器（降级）",
+            "任务规划": "Plan-and-Execute",
+            "幻觉拦截": "槽位一致性校验",
+            "资金风控": "确定性规则引擎 L0–L3",
+            "语音识别": "浏览器原生识别",
+            "语音合成": "讯飞在线合成" if cloud_tts else "浏览器语音合成",
+        },
         "elder": bank.ACCOUNTS["E001"],
         "limits": bank.LIMITS["E001"],
         "auth_threshold": risk.AUTH_THRESHOLD,
