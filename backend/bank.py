@@ -206,7 +206,8 @@ GUARD_EVENTS: list[dict] = [
 
 def reset() -> None:
     """把可变状态恢复到初始值（演示重置用）。"""
-    global TRANSACTIONS, SUBSCRIPTIONS, CARDS, HOLDINGS, LIMITS, SCHEDULES, CARD_APPLICATIONS
+    global TRANSACTIONS, SUBSCRIPTIONS, CARDS, HOLDINGS, LIMITS, SCHEDULES
+    global CARD_APPLICATIONS, GUARD_EVENTS
     TRANSACTIONS = copy.deepcopy(_SEED["transactions"])
     SUBSCRIPTIONS = copy.deepcopy(_SEED["subscriptions"])
     CARDS = copy.deepcopy(_SEED["cards"])
@@ -214,6 +215,7 @@ def reset() -> None:
     LIMITS = copy.deepcopy(_SEED["limits"])
     SCHEDULES = []
     CARD_APPLICATIONS = []
+    GUARD_EVENTS = copy.deepcopy(_SEED["guard_events"])
     for acc_id, acc in ACCOUNTS.items():
         acc["balance"] = _SEED["balances"][acc_id]
         acc["locked"] = 0.0
@@ -251,5 +253,6 @@ _SEED = {
     "cards": copy.deepcopy(CARDS),
     "holdings": copy.deepcopy(HOLDINGS),
     "limits": copy.deepcopy(LIMITS),
+    "guard_events": copy.deepcopy(GUARD_EVENTS),
     "balances": {k: v["balance"] for k, v in ACCOUNTS.items()},
 }

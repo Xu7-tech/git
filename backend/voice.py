@@ -37,9 +37,12 @@ FALLBACK_LINES = [
     {"dialect": "mandarin", "text": "我的卡丢了，赶紧挂失"},
     {"dialect": "mandarin", "text": "有没有乱扣费的订阅，帮我取消"},
     {"dialect": "mandarin", "text": "最近有什么安排要提醒我"},
+    {"dialect": "mandarin", "text": "帮我买一万块的理财，要稳当的"},
+    {"dialect": "mandarin", "text": "生日的事情帮我办了吧"},
     {"dialect": "cantonese", "text": "畀我个孙转五百蚊"},
     {"dialect": "cantonese", "text": "睇下我今个月用咗几多钱"},
     {"dialect": "cantonese", "text": "我张卡唔见咗，帮我挂失"},
+    {"dialect": "cantonese", "text": "帮我买一万蚊嘅理财"},
 ]
 
 # --------------------------------------------------------------------------

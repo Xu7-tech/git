@@ -43,6 +43,7 @@ INTENT_SET = {
         ("今年一共花了多少", "bill_analysis"),
         ("给13800002222转三千块", "transfer"),
         ("我想申请一张信用卡", "card_apply"),
+        ("生日的事情帮我办了吧", "guard_run"),
     ],
     "cantonese": [
         ("畀我个孙转五百蚊", "transfer"), ("畀我个仔转三千蚊", "transfer"),

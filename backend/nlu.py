@@ -136,6 +136,10 @@ PHONE_RE = re.compile(r"1[3-9]\d{9}")
 
 SPLIT_HINT = re.compile(r"拼单|分摊|平分|凑钱|AA|aa|几个人分|个人分")
 CARD_APPLY_HINT = re.compile(r"(申请|申請|办|辦|开|開)[^，。,.！!？?]{0,4}卡")
+# 老人主动要求执行守护日历上的动作链
+GUARD_RUN_HINT = re.compile(r"(帮我办|去办|办了吧|办一下|现在就办|现在就给|执行一下|走一遍)")
+GUARD_TOPICS = (("生日", "生日"), ("复诊", "复诊"), ("体检", "复诊"),
+                ("燃气", "燃气"), ("水电", "燃气"), ("缴费", "燃气"), ("物业", "燃气"))
 
 
 def looks_like_split(text: str) -> bool:
@@ -145,6 +149,19 @@ def looks_like_split(text: str) -> bool:
 def looks_like_card_apply(text: str) -> bool:
     """'申请一张信用卡' / '办张卡' / '开卡' 这类说法，卡字前隔着量词也要认出来。"""
     return bool(CARD_APPLY_HINT.search(text))
+
+
+def guard_run_target(text: str) -> str | None:
+    """返回要执行的守护日历事件类型；None 表示这不是一个执行请求。
+
+    注意与「最近有什么安排要提醒我」区分：只在出现明确的执行动词时才算执行请求。
+    """
+    if not GUARD_RUN_HINT.search(text):
+        return None
+    for key, target in GUARD_TOPICS:
+        if key in text:
+            return target
+    return ""      # 说了要办但没指明哪一件 → 由调用方取最近一条
 
 
 def schedule_hint(text: str) -> bool:
@@ -245,6 +262,12 @@ def parse_intent_rule(text: str, dialect: str) -> Intent:
     if looks_like_card_apply(instruction):
         return Intent(name="card_apply",
                       slots={"alias_hits": aliases, "payee_hits": names},
+                      confidence=0.8, raw_utterance=text, dialect=dialect, source="rule")
+    guard_target = guard_run_target(instruction)
+    if guard_target is not None:
+        return Intent(name="guard_run",
+                      slots={"alias_hits": aliases, "payee_hits": names,
+                             "target": guard_target},
                       confidence=0.8, raw_utterance=text, dialect=dialect, source="rule")
 
     for name, keywords in INTENT_RULES:

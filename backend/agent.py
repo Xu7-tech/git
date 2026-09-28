@@ -269,6 +269,16 @@ def build_plan(intent: Intent) -> Plan:
         return Plan(intent=intent, steps=[step],
                     readback=f"守护日历上，「{ev['title']}」要到了。{'；'.join(ev['actions'])}。要我现在就去办吗？")
 
+    if name == "guard_run":
+        target = slots.get("target") or ""
+        matched = [e for e in bank.GUARD_EVENTS if target and target in e["title"]]
+        event = matched[0] if matched else min(bank.GUARD_EVENTS, key=lambda e: e["date"])
+        step = PlanStep(tool="guard.run", params={"event_id": event["id"]},
+                        summary=event["title"])
+        return Plan(intent=intent, steps=[step],
+                    readback=f"守护日历上「{event['title']}」的动作链是：{'；'.join(event['actions'])}。"
+                             f"要我现在就去办吗？")
+
     if name == "emergency_stop":
         step = PlanStep(tool="bank.emergency_stop", params={"reason": raw},
                         summary="冻结全部支付渠道")
@@ -712,7 +722,13 @@ def due_guard_events(today: str | None = None) -> list[dict]:
     today_dt = datetime.strptime(today, "%Y-%m-%d") if today else datetime.now()
     due = []
     for event in bank.GUARD_EVENTS:
-        event_dt = datetime.strptime(event["date"], "%Y-%m-%d")
+        try:
+            event_dt = datetime.strptime(event["date"], "%Y-%m-%d")
+        except (ValueError, TypeError):
+            # 恶意或异常日期不能让整个守护日历接口崩掉，跳过它即可
+            audit("risk", "rule-engine", f"守护日历事件「{event.get('title')}」日期非法，已跳过",
+                  date=event.get("date"))
+            continue
         trigger = event_dt - timedelta(days=event["advance_days"])
         if trigger.date() <= today_dt.date() <= event_dt.date():
             due.append({**event, "days_left": (event_dt.date() - today_dt.date()).days})

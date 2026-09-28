@@ -203,6 +203,7 @@ button { font-family: inherit; cursor: pointer; }
 .modal-line { font-size: 1.1em; color: var(--ink-2); }
 .modal-line b { color: var(--ink); font-size: 1.15em; }
 .modal-amount { font-size: 2.5em; font-weight: 800; color: var(--brand-dark); letter-spacing: .02em; }
+.modal-amount.text { font-size: 1.4em; font-weight: 600; color: var(--ink); }
 .modal-note { font-size: .95em; color: var(--warn); background: var(--warn-bg); padding: 12px 14px; border-radius: 12px; }
 .modal-actions { display: flex; gap: 14px; margin-top: 6px; }
 .modal-countdown { text-align: center; font-size: .86em; color: var(--muted); }

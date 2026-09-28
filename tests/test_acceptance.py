@@ -45,6 +45,7 @@ class IntentCase(unittest.TestCase):
         ("今年一共花了多少", "bill_analysis", None),
         ("给13800002222转三千块", "transfer", 3000.0),
         ("我想申请一张信用卡", "card_apply", None),
+        ("生日的事情帮我办了吧", "guard_run", None),
     ]
 
     CANTONESE = [
@@ -459,6 +460,47 @@ class GuardCalendarCase(unittest.TestCase):
         self.assertTrue(all("risk" in s for s in result["steps"]),
                         "联动动作链每一条都必须带权限分级标注")
 
+    def test_elder_can_trigger_linked_chain_by_voice(self):
+        """跨场景联动要能被老人一句话触发，否则录屏演示不出来。"""
+        payload = agent.create_session(PlanRequest(text="生日的事情帮我办了吧", hour=10))
+        step = payload["plan"]["steps"][0]
+        self.assertEqual(step["tool"], "guard.run")
+        self.assertEqual(step["params"]["event_id"], "G-生日")
+        # 联动不代表免确认，仍然走权限分级
+        self.assertEqual(payload["risk"]["level"], RiskLevel.L1)
+        self.assertEqual(payload["action"], "confirm_popup")
+        done = agent.confirm(payload["session_id"], ConfirmRequest(
+            session_id=payload["session_id"], ack_voice=True, ack_popup=True))
+        self.assertEqual(done["status"], "executed")
+        self.assertEqual(bank.ACCOUNTS["E001"]["locked"], 1000.0)
+
+    def test_guard_run_picks_the_named_event(self):
+        payload = agent.create_session(PlanRequest(text="燃气费的事情帮我办一下", hour=10))
+        self.assertEqual(payload["plan"]["steps"][0]["params"]["event_id"], "G-燃气费")
+
+    def test_reminder_query_is_not_treated_as_execution(self):
+        payload = agent.create_session(PlanRequest(text="最近有什么安排要提醒我", hour=10))
+        self.assertEqual(payload["plan"]["steps"][0]["tool"], "guard.list")
+
+    def test_child_deployed_event_keeps_its_real_date(self):
+        """子女端预置的事件必须存真实日期，否则守护日历整个接口会崩。"""
+        bank.GUARD_EVENTS.append({
+            "id": "G-老伴生日", "title": "老伴生日", "date": "2026-10-16",
+            "advance_days": 2, "kind": "child_deployed", "deployed_by": "张伟",
+            "lock_amount": 1000.0, "actions": ["锁定活期"], "steps": [],
+        })
+        due = agent.due_guard_events("2026-10-14")
+        self.assertIn("G-老伴生日", [e["id"] for e in due])
+
+    def test_malformed_event_date_does_not_break_the_calendar(self):
+        bank.GUARD_EVENTS.append({
+            "id": "G-坏数据", "title": "坏数据", "date": "不是日期",
+            "advance_days": 2, "kind": "child_deployed", "deployed_by": "张伟",
+            "lock_amount": 0.0, "actions": [], "steps": [],
+        })
+        due = agent.due_guard_events("2026-10-14")     # 不应抛异常
+        self.assertEqual([e["id"] for e in due], ["G-生日"])
+
     def test_child_can_deploy_and_child_cannot_widen_limits(self):
         tightened = agent.update_limits(free_limit=100)
         self.assertEqual(tightened["limits"]["free_limit"], 100.0)
@@ -537,6 +579,19 @@ class DegradedModeCase(unittest.TestCase):
         result = voice.synthesize(TtsRequest(text="您好", dialect="cantonese"))
         self.assertEqual(result["provider"], "browser-speech-synthesis")
         self.assertEqual(result["voice_hint"], "zh-HK")
+
+    def test_every_quick_phrase_is_actually_understood(self):
+        """老人端「常用说法」按钮上的每一句都必须真能识别，否则演示会当场翻车。"""
+        known = {name for name, _ in nlu.INTENT_RULES} | {
+            "bill_split", "transfer_schedule", "card_apply", "guard_run"}
+        for line in voice.fallback_lines():
+            with self.subTest(text=line["text"]):
+                intent = nlu.parse_intent(line["text"])
+                self.assertIn(intent.name, known, f"「{line['text']}」识别成了 {intent.name}")
+                payload = agent.create_session(
+                    PlanRequest(text=line["text"], hour=10))
+                self.assertTrue(payload["plan"]["steps"],
+                                f"「{line['text']}」没有生成任何可执行步骤")
 
     def test_full_mainline_runs_in_degraded_mode(self):
         """演示主线：粤语查账 → 小额免密 → 大额授权 → 拦截 → 取消订阅 → 生日联动。"""

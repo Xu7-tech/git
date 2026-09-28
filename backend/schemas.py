@@ -165,6 +165,7 @@ class DeployPlanRequest(BaseModel):
     """子女端远程预置的守护日历动作链。"""
 
     event: str
+    date: str = ""                 # YYYY-MM-DD
     lock_amount: float = 1000.0
     advance_days: int = 2
     actions: list[str] = Field(default_factory=lambda: ["订购鲜花", "订购蛋糕"])

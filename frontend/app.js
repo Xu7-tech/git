@@ -222,11 +222,23 @@ function applyHash() {
   if (["elder", "child", "demo"].includes(view)) switchTo(view);
 }
 
-/* 二次确认弹窗：确认按钮延迟 1 秒激活，防误触 */
+/* 二次确认弹窗：确认按钮延迟 1 秒激活，防误触。
+   转账 / 理财这类动钱的操作突出金额与收款人；挂失、守护日历这类非动钱操作改为突出事由。 */
 function openPopup(step) {
   const amount = step.params.amount || 0;
+  const moneyOp = ["transfer.execute", "transfer.schedule",
+    "wealth.purchase", "wealth.redeem"].includes(step.tool);
+  $("cfPayeeLine").hidden = !moneyOp;
   $("cfPayee").textContent = step.params.payee || "—";
-  $("cfAmount").textContent = `¥ ${amount.toLocaleString("zh-CN", { minimumFractionDigits: 2 })}`;
+  const amountEl = $("cfAmount");
+  if (moneyOp) {
+    amountEl.className = "modal-amount";
+    amountEl.textContent = `¥ ${amount.toLocaleString("zh-CN", { minimumFractionDigits: 2 })}`;
+  } else {
+    amountEl.className = "modal-amount text";
+    amountEl.textContent = step.summary || "请确认本次操作";
+  }
+  $("cfOk").textContent = moneyOp ? "确认转账" : "确认办理";
   const risk = state.plan.risk;
   $("cfNote").textContent = (risk.reasons || []).join("；");
   $("confirmMask").hidden = false;
@@ -234,13 +246,15 @@ function openPopup(step) {
   const ok = $("cfOk");
   ok.disabled = true;
   let n = 1;
-  $("cfCountdown").textContent = "请仔细核对，1 秒后按钮才可点击";
+  $("cfCountdown").textContent = moneyOp
+    ? "请仔细核对收款人与金额，1 秒后按钮才可点击"
+    : "请仔细核对，1 秒后按钮才可点击";
   const timer = setInterval(() => {
     n -= 1;
     if (n <= 0) {
       clearInterval(timer);
       ok.disabled = false;
-      $("cfCountdown").textContent = "请确认收款人与金额无误";
+      $("cfCountdown").textContent = moneyOp ? "请确认收款人与金额无误" : "请确认无误后点击下方按钮";
     }
   }, 1000);
 }
@@ -438,11 +452,11 @@ $("deployGuard").addEventListener("click", async () => {
   if (!event || !date) { toast("请填写事件名称与日期"); return; }
   try {
     const r = await post("/guard/deploy", {
-      event, lock_amount: parseFloat($("guardLock").value) || 0,
+      event, date,
+      lock_amount: parseFloat($("guardLock").value) || 0,
       advance_days: parseInt($("guardAdvance").value, 10) || 0,
       actions: ["锁定活期", "提前订购鲜花", "提前订购蛋糕"],
     });
-    r.event.date = date;
     $("deployBox").textContent = `已预置「${event}」，到期前 ${r.event.advance_days} 天执行动作链。`;
     toast("守护日历已预置");
     loadSide();

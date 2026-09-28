@@ -249,8 +249,10 @@ def guard_run(event_id: str, today: str | None = None):
 
 @app.post("/guard/deploy", tags=["守护日历"])
 def guard_deploy(req: DeployPlanRequest):
+    from datetime import date as _date
+    event_date = req.date or _date.today().isoformat()
     event = {
-        "id": f"G-{req.event}", "title": req.event, "date": req.event,
+        "id": f"G-{req.event}", "title": req.event, "date": event_date,
         "advance_days": req.advance_days, "kind": "child_deployed",
         "deployed_by": "张伟", "lock_amount": req.lock_amount, "actions": req.actions,
         "steps": [],
