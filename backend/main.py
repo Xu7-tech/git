@@ -46,9 +46,51 @@ def fallback_lines():
 # --------------------------------------------------------------------------
 
 
+async def _push_child(payload: dict) -> None:
+    """把需要子女知情的事情推送到子女端（WebSocket + 通知列表）。
+
+    两类：一是风控直接拦下的操作，二是老人自主完成、但子女应当知情的动作
+    （理财申购 / 赎回、挂失、办卡、守护日历联动、定期转账）。
+    """
+    session_id = payload.get("session_id")
+    plan = payload.get("plan") or {}
+    steps = plan.get("steps") or []
+    tool = steps[0]["tool"] if steps else None
+    status = payload.get("status")
+
+    if status == "blocked":
+        risk = payload.get("risk") or {}
+        reasons = risk.get("reasons") or []
+        await agent.notify({
+            "type": "blocked",
+            "title": "一笔操作被风控拦下",
+            "detail": "；".join(reasons)[:150] or "命中风险规则",
+            "level": risk.get("level"),
+            "reasons": reasons,
+        })
+        return
+
+    if status != "executed" or tool not in agent.CHILD_NOTIFY_TOOLS:
+        return
+    if session_id and session_id in agent.NOTIFIED_SESSIONS:
+        return
+    if session_id:
+        agent.NOTIFIED_SESSIONS.add(session_id)
+    result = payload.get("result") or {}
+    summary = (result.get("steps") or [{}])[0].get("summary", "")
+    await agent.notify({
+        "type": tool.replace(".", "_"),
+        "title": agent.CHILD_NOTIFY_TOOLS[tool],
+        "detail": summary or (steps[0].get("summary", "") if steps else ""),
+    })
+
+
 @app.post("/agent/plan", tags=["智能体"])
-def plan(req: PlanRequest):
-    return agent.create_session(req)
+async def plan(req: PlanRequest):
+    payload = agent.create_session(req)
+    if payload.get("status") == "blocked":
+        await _push_child(payload)
+    return payload
 
 
 @app.post("/agent/confirm", tags=["智能体"])
@@ -59,17 +101,23 @@ async def confirm(req: ConfirmRequest):
         ticket = agent.TICKETS[result["ticket_id"]]
         await agent.notify({
             "type": "auth_request",
+            "title": "老人发起一笔大额转账，等您授权",
+            "detail": f"¥{ticket.amount:,.2f} → {ticket.payee}",
             "ticket": ticket.model_dump(mode="json"),
             "elder_text": session["plan"].readback,
             "reasons": session["risk"].reasons,
         })
+    else:
+        await _push_child(result)
     return result
 
 
 @app.post("/agent/execute", tags=["智能体"])
-def execute(req: ExecuteRequest):
+async def execute(req: ExecuteRequest):
     agent.expire_stale_tickets()
-    return agent.execute(req.session_id)
+    result = agent.execute(req.session_id)
+    await _push_child(result)
+    return result
 
 
 # --------------------------------------------------------------------------
@@ -224,8 +272,13 @@ def cancel_subscription(req: SubscriptionCancelRequest):
 @app.post("/mock-bank/emergency-stop", tags=["模拟银行"])
 async def emergency(req: EmergencyRequest):
     result = agent.emergency_stop(req.reason)
-    await agent.notify({"type": "emergency_stop", "reason": req.reason,
-                        "report": result})
+    await agent.notify({
+        "type": "emergency_stop",
+        "title": "老人触发了紧急止付",
+        "detail": f"原因：{req.reason}　已冻结全部支付渠道并引导 96110",
+        "reason": req.reason,
+        "report": result,
+    })
     return result
 
 

@@ -427,14 +427,34 @@ async function loadChild() {
 
   const notes = $("notifyBox");
   notes.innerHTML = data.notifications.slice().reverse().slice(0, 8)
-    .map((n) => `<li>${n.type === "auth_request" ? "收到一笔待授权转账" : n.type === "emergency_stop" ? "老人触发紧急止付" : n.type} · ${ticketLine(n)}</li>`)
+    .map((n) => {
+      const { title, detail } = notifyLine(n);
+      const time = n.ts ? String(n.ts).slice(11, 16) : "";
+      return `<li><span class="muted">${time}</span> <b>${title}</b>${detail ? ` · ${detail}` : ""}</li>`;
+    })
     .join("") || `<li class="muted">暂无通知</li>`;
 }
 
-function ticketLine(n) {
-  if (n.ticket) return `¥${n.ticket.amount} → ${n.ticket.payee}`;
-  if (n.reason) return String(n.reason).slice(0, 40);
-  return "";
+const NOTIFY_LABEL = {
+  auth_request: "收到一笔待授权转账",
+  emergency_stop: "老人触发紧急止付",
+  blocked: "一笔操作被风控拦下",
+  wealth_purchase: "老人申购了理财产品",
+  wealth_redeem: "老人赎回了理财",
+  card_loss: "老人挂失了银行卡",
+  card_apply: "老人提交了办卡申请",
+  guard_run: "守护日历动作链已执行",
+  transfer_schedule: "老人设置了定期转账",
+};
+
+function notifyLine(n) {
+  const title = n.title || NOTIFY_LABEL[n.type] || n.type || "通知";
+  let detail = n.detail || "";
+  if (!detail) {
+    if (n.ticket) detail = `¥${n.ticket.amount} → ${n.ticket.payee}`;
+    else if (n.reason) detail = String(n.reason).slice(0, 60);
+  }
+  return { title, detail };
 }
 
 $("saveLimits").addEventListener("click", async () => {
@@ -533,12 +553,9 @@ function connectWs() {
     const ws = new WebSocket(`${proto}://${location.host}/ws/auth`);
     ws.onmessage = (ev) => {
       const msg = JSON.parse(ev.data);
-      if (msg.type === "auth_request") {
-        toast(`收到待授权转账 ¥${msg.ticket.amount} → ${msg.ticket.payee}`);
-        if ($("view-child").classList.contains("active")) loadChild();
-      } else if (msg.type === "emergency_stop") {
-        toast("老人触发了紧急止付，已冻结全部渠道");
-      }
+      const { title, detail } = notifyLine(msg);
+      toast(detail ? `${title}：${detail}` : title);
+      if ($("view-child").classList.contains("active")) loadChild();
     };
     ws.onclose = () => setTimeout(connectWs, 3000);
     ws.onerror = () => ws.close();

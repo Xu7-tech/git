@@ -104,6 +104,71 @@ class IntentCase(unittest.TestCase):
         self.assertIn("多少钱", payload["elder_text"])
 
 
+class CantoneseCase(unittest.TestCase):
+    """粤语识别：归一化后的句式变化样本（繁简混排，模拟真实转写结果）。"""
+
+    CASES = [
+        # (粤语原话, 期望意图, 期望金额)
+        ("我想过数畀阿妈五百蚊", "transfer", 500.0),
+        ("畀我個女转三千蚊", "transfer", 3000.0),
+        ("唔該幫我轉賬畀老李一千蚊", "transfer", 1000.0),
+        ("帮我睇下户口仲有几多钱", "balance_query", None),
+        ("幫我睇下今個月用咗幾多錢", "bill_analysis", None),
+        ("我张卡唔见咗", "card_loss", None),
+        ("張卡唔見咗，幫我掛失", "card_loss", None),
+        ("帮我cut咗个自动续费", "subscription_cancel", None),
+        ("我唔要呢個訂閱", "subscription_cancel", None),
+        ("帮我买啲稳阵嘅理财", "wealth_purchase", None),
+        ("我想攞返啲钱", "wealth_redeem", None),
+        ("帮我閂咗境外交易", "card_switch", None),
+        ("有冇乱扣我嘅钱", "subscription_scan", None),
+        ("我想睇下守护日历", "calendar_query", None),
+        ("老窦生日嘅嘢帮我办咗佢", "guard_run", None),
+    ]
+
+    def test_cantonese_samples(self):
+        for text, expect_intent, expect_amount in self.CASES:
+            with self.subTest(text=text):
+                intent = nlu.parse_intent(text)
+                self.assertEqual(intent.name, expect_intent)
+                if expect_amount is not None:
+                    self.assertEqual(intent.slots.get("amount"), expect_amount)
+
+    def test_dialect_is_detected_for_traditional_and_simplified(self):
+        for text in ("我张卡唔见咗", "張卡唔見咗", "畀我個女转三千蚊", "有冇乱扣"):
+            with self.subTest(text=text):
+                self.assertEqual(nlu.detect_dialect(text), "cantonese")
+                self.assertGreaterEqual(nlu.dialect_confidence(text), 1)
+
+    def test_mandarin_is_not_mistaken_for_cantonese(self):
+        for text in ("帮我买个稳当的理财", "给我女儿转五千块", "这个月钱都花哪了",
+                     "有没有乱扣费的订阅，帮我取消"):
+            with self.subTest(text=text):
+                self.assertEqual(nlu.detect_dialect(text), "mandarin")
+
+    def test_normalization_is_additive_not_destructive(self):
+        text = "帮我睇下今个月用咗几多钱"
+        normalized = nlu.normalize_cantonese(text)
+        self.assertNotEqual(normalized, text)
+        self.assertIn("多少", normalized)
+        # 原文里的粤语特征词仍然参与匹配，所以归一化是加召回而不是替换
+        self.assertEqual(nlu.parse_intent(text).name, "bill_analysis")
+
+    def test_long_cantonese_words_win_over_short_ones(self):
+        """'唔見' 必须先于 '唔' 被替换，否则会被截成错词。"""
+        self.assertEqual(nlu.normalize_cantonese("唔見咗"), "丢失了")
+        self.assertEqual(nlu.normalize_cantonese("唔該晒"), "麻烦晒")
+        self.assertEqual(nlu.normalize_cantonese("唔要"), "不要")
+
+    def test_cantonese_safe_direction_is_recognised(self):
+        payload = agent.create_session(PlanRequest(text="帮我閂咗境外交易", hour=10))
+        self.assertFalse(payload["plan"]["intent"]["slots"].get("enable", True))
+
+    def test_traditional_alias_resolves_to_payee(self):
+        payload = agent.create_session(PlanRequest(text="畀我個女转三千蚊", hour=10))
+        self.assertEqual(payload["plan"]["steps"][0]["params"]["payee"], "张敏")
+
+
 class PermissionCase(unittest.TestCase):
     """权限分级：L0–L3 全部边界。"""
 
@@ -633,6 +698,37 @@ class DegradedModeCase(unittest.TestCase):
         agent.reset_all()
         chain = agent.run_guard_event("G-生日", {})
         self.assertIn("生日", chain["event"])
+
+
+class ChildNotificationCase(unittest.TestCase):
+    """老人自主完成、但子女应当知情的动作。"""
+
+    def setUp(self):
+        agent.reset_all()
+
+    def test_wealth_and_card_actions_are_on_the_notify_list(self):
+        for tool in ("wealth.purchase", "wealth.redeem", "card.loss", "card.apply",
+                     "guard.run", "transfer.schedule"):
+            with self.subTest(tool=tool):
+                self.assertIn(tool, agent.CHILD_NOTIFY_TOOLS)
+
+    def test_wealth_purchase_result_tells_elder_child_was_notified(self):
+        payload = agent.create_session(
+            PlanRequest(text="帮我买一万块的理财，要稳当的", hour=10))
+        self.assertEqual(payload["plan"]["steps"][0]["tool"], "wealth.purchase")
+        done = agent.confirm(payload["session_id"], ConfirmRequest(
+            session_id=payload["session_id"], ack_voice=True, ack_popup=True))
+        self.assertEqual(done["status"], "executed")
+        # 老人端看到的应当是执行结果，并明确知道子女已被同步
+        self.assertIn("已申购", done["elder_text"])
+        self.assertIn("张伟", done["elder_text"])
+
+    def test_transfer_result_does_not_claim_child_notification(self):
+        """普通小额转账不该谎称通知了子女。"""
+        payload = agent.create_session(PlanRequest(text="给老李转五十块", hour=10))
+        done = agent.confirm(payload["session_id"], ConfirmRequest(
+            session_id=payload["session_id"], ack_voice=True))
+        self.assertNotIn("同步通知", done["elder_text"])
 
 
 class AuditCase(unittest.TestCase):

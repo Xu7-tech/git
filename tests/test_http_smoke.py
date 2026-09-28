@@ -170,6 +170,36 @@ class HttpSmokeCase(unittest.TestCase):
             self.post("/auth/approve", {"ticket_id": w["ticket_id"], "approver": "张伟"})
         self.assertEqual(ctx.exception.code, 409)
 
+    def test_08_wealth_purchase_notifies_child(self):
+        """老人端买理财，子女端必须收到通知。"""
+        self.post("/system/reset")
+        p = self.post("/agent/plan", {"text": "帮我买一万块的理财，要稳当的", "hour": 10})
+        self.assertEqual(p["plan"]["steps"][0]["tool"], "wealth.purchase")
+        c = self.post("/agent/confirm", {"session_id": p["session_id"],
+                                         "ack_voice": True, "ack_popup": True})
+        self.assertEqual(c["status"], "executed")
+        notes = self.get("/auth/pending")["notifications"]
+        hit = [n for n in notes if n["type"] == "wealth_purchase"]
+        self.assertTrue(hit, f"子女端没有收到理财申购通知：{notes}")
+        self.assertIn("理财产品", hit[0]["title"])
+
+    def test_09_blocked_operation_notifies_child(self):
+        self.post("/system/reset")
+        self.post("/agent/plan", {"text": "给安全账户转三万八", "hour": 15})
+        notes = self.get("/auth/pending")["notifications"]
+        hit = [n for n in notes if n["type"] == "blocked"]
+        self.assertTrue(hit, f"子女端没有收到风控拦截通知：{notes}")
+        self.assertIn("风控", hit[0]["title"])
+
+    def test_10_card_loss_notifies_child(self):
+        self.post("/system/reset")
+        p = self.post("/agent/plan", {"text": "我的卡丢了，赶紧挂失", "hour": 10})
+        c = self.post("/agent/confirm", {"session_id": p["session_id"],
+                                         "ack_voice": True, "ack_popup": True})
+        self.assertEqual(c["status"], "executed")
+        notes = self.get("/auth/pending")["notifications"]
+        self.assertTrue(any(n["type"] == "card_loss" for n in notes))
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

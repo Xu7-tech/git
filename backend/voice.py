@@ -43,6 +43,8 @@ FALLBACK_LINES = [
     {"dialect": "cantonese", "text": "睇下我今个月用咗几多钱"},
     {"dialect": "cantonese", "text": "我张卡唔见咗，帮我挂失"},
     {"dialect": "cantonese", "text": "帮我买一万蚊嘅理财"},
+    {"dialect": "cantonese", "text": "帮我cut咗个自动续费"},
+    {"dialect": "cantonese", "text": "老窦生日嘅嘢帮我办咗佢"},
 ]
 
 # --------------------------------------------------------------------------

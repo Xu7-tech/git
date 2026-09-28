@@ -20,7 +20,18 @@ SESSIONS: dict[str, dict] = {}
 TICKETS: dict[str, AuthTicket] = {}
 NOTIFICATIONS: list[dict] = []
 WS_CLIENTS: list = []                 # 由 main.py 注册的 WebSocket 连接
+NOTIFIED_SESSIONS: set[str] = set()   # 已推送过执行通知的会话，避免重复推送
 _SEQ = itertools.count(1)
+
+# 这些动作不会拦下老人，但子女应当知情 —— 执行后主动推送到子女端
+CHILD_NOTIFY_TOOLS = {
+    "wealth.purchase": "老人申购了理财产品",
+    "wealth.redeem": "老人赎回了理财",
+    "card.loss": "老人挂失了银行卡",
+    "card.apply": "老人提交了办卡申请",
+    "guard.run": "守护日历动作链已执行",
+    "transfer.schedule": "老人设置了定期转账",
+}
 
 
 def audit(stage: str, actor: str, note: str, **detail) -> AuditEntry:
@@ -848,6 +859,16 @@ def _session_payload(session: dict) -> dict:
         "ticket_id": session["ticket_id"],
         "result": session["result"],
     }
+    if session["status"] == "executed" and session["result"]:
+        # 执行完成后老人端应当看到结果，而不是继续显示操作前的复述文本
+        summaries = [s.get("summary", "") for s in session["result"].get("steps", [])]
+        tool = plan.steps[0].tool if plan.steps else ""
+        text = "。".join(s for s in summaries if s)
+        if tool in CHILD_NOTIFY_TOOLS:
+            text += f"。这件事已经同步通知{bank.ACCOUNTS['C001']['owner']}了"
+        if text:
+            payload["elder_text"] = text
+        return payload
     if decision is None:
         return payload
     if decision.blocked:
@@ -874,4 +895,5 @@ def reset_all() -> None:
     SESSIONS.clear()
     TICKETS.clear()
     NOTIFICATIONS.clear()
+    NOTIFIED_SESSIONS.clear()
     AUDIT.clear()

@@ -95,13 +95,56 @@ def extract_amount(text: str) -> float | None:
 # 方言识别
 # --------------------------------------------------------------------------
 
-CANTONESE_MARKERS = ("畀", "唔", "係", "嘅", "幾多", "睇", "張卡", "唔見", "边个", "邊個",
-                     "咁", "啲", "冇", "喺", "乜", "點解", "幫我", "過數", "转数", "轉數",
-                     "銀紙", "幾時", "得唔得", "快啲")
+# 粤语特征词。繁简两种写法都要收，老人手写与语音转写出来的字形并不统一。
+CANTONESE_MARKERS = (
+    "畀", "俾", "唔", "係", "嘅", "啲", "哋", "冇", "喺", "佢", "咗", "乜", "啱",
+    "睇", "嘢", "咁", "嚟", "攞", "摞", "閂", "闩", "冇得",
+    "幾多", "几多", "幾時", "几时", "邊個", "边个", "點解", "点解", "邊度", "边度",
+    "呢個", "呢个", "嗰個", "嗰个", "唔見", "唔见", "唔要", "唔好", "唔該", "唔该",
+    "唔使", "唔得", "得唔得", "快啲", "張卡", "张卡", "銀紙", "银纸",
+    "過數", "过数", "轉數", "转数", "過戶", "过户",
+)
+
+# 粤语 → 普通话 归一化表。
+# 匹配时会把「原文」与「归一化结果」拼在一起做关键词匹配，原文里的粤语关键词依然有效，
+# 所以这是加召回，不是替换。长词必须排在短词前（"唔見" 早于 "唔"），否则会被截成错词。
+CANTONESE_NORMALIZE_RAW = (
+    ("唔見", "丢失"), ("唔见", "丢失"), ("唔要", "不要"), ("唔好", "不要"),
+    ("唔該", "麻烦"), ("唔该", "麻烦"), ("唔使", "不用"), ("唔得", "不行"),
+    ("過數", "转账"), ("过数", "转账"), ("轉數", "转账"), ("转数", "转账"),
+    ("過戶", "转账"), ("过户", "转账"),
+    ("幾多", "多少"), ("几多", "多少"), ("幾時", "几时"),
+    ("邊個", "哪个"), ("边个", "哪个"), ("邊度", "哪里"), ("边度", "哪里"),
+    ("點解", "为什么"), ("点解", "为什么"),
+    ("呢個", "这个"), ("呢个", "这个"), ("嗰個", "那个"), ("嗰个", "那个"),
+    ("銀紙", "钱"), ("银纸", "钱"), ("張卡", "张卡"),
+    ("畀", "给"), ("俾", "给"), ("係", "是"), ("嘅", "的"), ("啲", "些"),
+    ("哋", "们"), ("佢", "他"), ("睇", "看"), ("喺", "在"), ("冇", "没有"),
+    ("咗", "了"), ("啱", "对"), ("攞", "拿"), ("摞", "拿"),
+    ("閂", "关闭"), ("闩", "关闭"), ("嘢", "事情"), ("嚟", "来"), ("咁", "这么"),
+    ("唔", "不"),
+)
+CANTONESE_NORMALIZE = tuple(
+    sorted(CANTONESE_NORMALIZE_RAW, key=lambda pair: -len(pair[0]))
+)
+
+
+def normalize_cantonese(text: str) -> str:
+    """把粤语说法归一化成普通话，让同一套意图规则通吃两种方言。"""
+    out = text
+    for src, dst in CANTONESE_NORMALIZE:
+        if src in out:
+            out = out.replace(src, dst)
+    return out
 
 
 def detect_dialect(text: str) -> str:
     return "cantonese" if any(m in text for m in CANTONESE_MARKERS) else "mandarin"
+
+
+def dialect_confidence(text: str) -> int:
+    """命中的粤语特征词个数，用于演示时说明判断依据。"""
+    return sum(1 for m in CANTONESE_MARKERS if m in text)
 
 
 # --------------------------------------------------------------------------
@@ -136,6 +179,10 @@ PHONE_RE = re.compile(r"1[3-9]\d{9}")
 
 SPLIT_HINT = re.compile(r"拼单|分摊|平分|凑钱|AA|aa|几个人分|个人分")
 CARD_APPLY_HINT = re.compile(r"(申请|申請|办|辦|开|開)[^，。,.！!？?]{0,4}卡")
+# 取消订阅允许中间夹字：'取消咗个订阅'、'退订个会员' 都要认出来
+SUB_CANCEL_HINT = re.compile(
+    r"(取消|退订|不要|cut|Cut|CUT)[^，。,.！!？?]{0,8}?"
+    r"(订阅|訂閱|續費|续费|扣费|扣費|扣钱|扣錢|会员|會員|会籍|會籍)")
 # 老人主动要求执行守护日历上的动作链
 GUARD_RUN_HINT = re.compile(r"(帮我办|去办|办了吧|办一下|现在就办|现在就给|执行一下|走一遍)")
 GUARD_TOPICS = (("生日", "生日"), ("复诊", "复诊"), ("体检", "复诊"),
@@ -220,14 +267,14 @@ INTENT_RULES: list[tuple[str, tuple[str, ...]]] = [
                         "紧急止付", "止付", "冻结所有")),
     ("card_loss", ("挂失", "掛失", "卡丢", "卡丟", "卡不见", "卡不見", "丢卡", "丟卡",
                    "卡唔見", "卡唔见", "唔見咗張卡", "唔见咗张卡", "唔見咗张卡",
-                   "唔见左张卡", "卡掉了")),
+                   "唔见左张卡", "卡掉了", "丢失", "遺失", "遗失", "不见")),
     ("subscription_cancel", ("取消订阅", "取消訂閱", "退订", "退訂", "取消自动续费",
                              "唔要呢个", "唔要呢個", "取消扣费", "别扣了", "唔好再扣")),
     ("card_switch", ("关掉", "關掉", "关闭", "關閉", "打开", "打開", "锁定交易", "解锁",
                      "境外交易", "境外", "安全锁", "安全鎖", "锁上", "鎖上")),
     ("wealth_redeem", ("赎回", "贖回", "取出来", "全部取", "卖出", "賣出", "取钱", "攞返")),
     ("wealth_purchase", ("买", "買", "理财", "理財", "申购", "申購", "存定期", "存钱",
-                         "稳当", "穩陣", "稳健", "穩健", "投资", "投資")),
+                         "稳当", "稳阵", "穩陣", "稳健", "穩健", "投资", "投資")),
     ("transfer", ("转账", "轉賬", "转钱", "汇款", "匯款", "打钱", "打錢", "转", "轉",
                   "過數", "过数", "轉數", "转数", "畀", "交学费", "缴物业费")),
     ("subscription_scan", ("订阅", "訂閱", "自动续费", "自動續費", "续费", "續費",
@@ -243,27 +290,34 @@ INTENT_RULES: list[tuple[str, tuple[str, ...]]] = [
 
 def parse_intent_rule(text: str, dialect: str) -> Intent:
     instruction = instruction_part(text)
+    normalized = normalize_cantonese(instruction)
+    # 原文 + 归一化结果一起匹配：粤语关键词照样命中，普通话规则也能被归一化后的说法触发
+    haystack = instruction if normalized == instruction else f"{instruction} {normalized}"
     aliases, names = find_payees(instruction)
 
     # 结构性判断优先于关键词匹配
-    if looks_like_split(instruction):
+    if looks_like_split(haystack):
         total, people = parse_split(instruction)
         share = round(total / people, 2) if total and people else None
         return Intent(name="bill_split",
                       slots={"alias_hits": aliases, "payee_hits": names,
                              "total": total, "people": people, "amount": share},
                       confidence=0.8, raw_utterance=text, dialect=dialect, source="rule")
-    if schedule_hint(instruction):
+    if schedule_hint(haystack):
         return Intent(name="transfer_schedule",
                       slots={"alias_hits": aliases, "payee_hits": names,
                              "amount": extract_amount(instruction),
                              "day": parse_schedule_day(instruction)},
                       confidence=0.8, raw_utterance=text, dialect=dialect, source="rule")
-    if looks_like_card_apply(instruction):
+    if looks_like_card_apply(haystack):
         return Intent(name="card_apply",
                       slots={"alias_hits": aliases, "payee_hits": names},
                       confidence=0.8, raw_utterance=text, dialect=dialect, source="rule")
-    guard_target = guard_run_target(instruction)
+    if SUB_CANCEL_HINT.search(haystack):
+        return Intent(name="subscription_cancel",
+                      slots={"alias_hits": aliases, "payee_hits": names, "want_cancel": True},
+                      confidence=0.8, raw_utterance=text, dialect=dialect, source="rule")
+    guard_target = guard_run_target(haystack)
     if guard_target is not None:
         return Intent(name="guard_run",
                       slots={"alias_hits": aliases, "payee_hits": names,
@@ -271,7 +325,7 @@ def parse_intent_rule(text: str, dialect: str) -> Intent:
                       confidence=0.8, raw_utterance=text, dialect=dialect, source="rule")
 
     for name, keywords in INTENT_RULES:
-        if any(k in text for k in keywords):
+        if any(k in haystack for k in keywords):
             slots: dict[str, Any] = {"alias_hits": aliases, "payee_hits": names}
             if name in ("transfer", "wealth_purchase", "wealth_redeem"):
                 slots["amount"] = extract_amount(instruction)
@@ -279,10 +333,12 @@ def parse_intent_rule(text: str, dialect: str) -> Intent:
                 slots["period"] = bill_period(instruction)
             if name == "card_switch":
                 slots["enable"] = not any(
-                    k in text for k in ("关掉", "關掉", "关闭", "關閉", "锁上", "鎖上", "唔要"))
-                slots["feature"] = "overseas" if "境外" in text else "domestic"
+                    k in haystack for k in ("关掉", "關掉", "关闭", "關閉", "锁上", "鎖上", "不要"))
+                slots["feature"] = "overseas" if "境外" in haystack else "domestic"
             if name == "subscription_scan":
-                slots["want_cancel"] = any(k in text for k in ("取消", "退订", "唔要"))
+                slots["want_cancel"] = any(k in haystack for k in ("取消", "退订", "不要"))
+            if normalized != instruction:
+                slots["normalized"] = normalized
             return Intent(name=name, slots=slots, confidence=0.82,
                           raw_utterance=text, dialect=dialect, source="rule")
     return Intent(name="unknown", slots={"alias_hits": aliases, "payee_hits": names},
