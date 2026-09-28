@@ -95,6 +95,77 @@ def _payee_label(name: str) -> str:
     return f"{name}（{note}）" if note else name
 
 
+def _merge_slots(base: dict, extra: dict) -> dict:
+    """把新提供的槽位并进原有槽位；空值不覆盖已有信息。"""
+    merged = dict(base)
+    for key, value in extra.items():
+        if key in ("alias_hits", "payee_hits"):
+            if value:
+                merged[key] = value
+        elif value not in (None, 0, 0.0, "", []):
+            merged[key] = value
+    return merged
+
+
+def _pending_slots(text: str) -> dict:
+    """从一句「只有答案、没有动词」的话里抽出可用槽位，例如「五百块」「王小龙」。"""
+    slots: dict = {}
+    # 先按常规找金额；找不到再按「整句就是一个金额」试一次，
+    # 因为老人回答「多少钱」时常说「一千五」这种不带量词的说法。
+    amount = nlu.extract_amount(text) or nlu.parse_bare_amount(text)
+    if amount:
+        slots["amount"] = amount
+    aliases, names = nlu.find_payees(text)
+    if aliases or names:
+        slots["alias_hits"], slots["payee_hits"] = aliases, names
+    total, people = nlu.parse_split(text)
+    if total:
+        slots["total"] = total
+    if people:
+        slots["people"] = people
+    return slots
+
+
+def _merge_with_pending(prev: Intent, text: str) -> Intent | None:
+    """把这一句当作上一轮缺失信息的回答，合并成一个完整意图。
+
+    判定顺序很关键：先看这一句自己能不能独立构成指令。
+    能独立成立且换了意图，说明老人改口说了一件新事，不能硬套进上一轮；
+    只有它自己立不住（「五百块」「王小龙」）时，才作为补槽答案。
+    """
+    fresh = nlu.parse_intent_rule(text, prev.dialect)
+    if fresh.name == prev.name:
+        merged = _merge_slots(prev.slots, fresh.slots)
+    elif fresh.name == "unknown":
+        merged = _merge_slots(prev.slots, _pending_slots(text))
+    else:
+        return None
+    if merged == prev.slots or not merged:
+        return None                     # 这一句没带来任何新信息
+    merged = {k: v for k, v in merged.items() if k != "consistency_note"}
+    if prev.name == "bill_split":
+        total, people = merged.get("total"), merged.get("people")
+        if total and people:
+            merged["amount"] = round(total / people, 2)
+    return Intent(name=prev.name, slots=merged,
+                  confidence=max(prev.confidence, fresh.confidence),
+                  raw_utterance=f"{prev.raw_utterance}｜{text}",
+                  speaker=prev.speaker, dialect=prev.dialect, source="rule")
+
+
+def _resolve_intent(req) -> Intent:
+    """决定这一句是「补上一轮缺的信息」还是「一条新指令」。"""
+    prev_session = SESSIONS.get(req.session_id) if getattr(req, "session_id", None) else None
+    if prev_session and prev_session["status"] == "clarify":
+        merged = _merge_with_pending(prev_session["plan"].intent, req.text)
+        if merged is not None:
+            audit("intent", req.speaker,
+                  f"承接上一轮追问，补入缺失信息后仍是 {merged.name}",
+                  utterance=merged.raw_utterance, slots=merged.slots)
+            return merged
+    return nlu.parse_intent(req.text, req.dialect)
+
+
 def build_plan(intent: Intent) -> Plan:
     name = intent.name
     slots = intent.slots
@@ -305,9 +376,9 @@ def build_plan(intent: Intent) -> Plan:
 
 
 def create_session(req) -> dict:
-    intent = nlu.parse_intent(req.text, req.dialect)
+    intent = _resolve_intent(req)
     audit("intent", req.speaker, f"识别意图 {intent.name}",
-          utterance=req.text, dialect=intent.dialect, source=intent.source,
+          utterance=intent.raw_utterance, dialect=intent.dialect, source=intent.source,
           slots={k: v for k, v in intent.slots.items() if k != "consistency_note"},
           consistency_note=intent.slots.get("consistency_note"))
     plan = build_plan(intent)
@@ -361,6 +432,9 @@ def create_session(req) -> dict:
 
 def _evaluate_plan(session: dict, req) -> RiskDecision:
     step = session["plan"].steps[0]
+    # 用意图携带的原始话语做话术检测：多轮补槽时它是「上一轮｜这一轮」的合并文本，
+    # 所以诈骗话术不会因为被拆成两句话就漏检。
+    utterance = session["plan"].intent.raw_utterance or req.text
     # 输入层第一道闸门：任何外部不可信文本先净化，命中指令型注入直接阻断。
     injection_hits: list[str] = []
     if req.defense_enabled:
@@ -385,7 +459,7 @@ def _evaluate_plan(session: dict, req) -> RiskDecision:
         return risk.evaluate(
             amount=step.params["amount"], payee=step.params["payee"],
             hour=req.hour, device_trusted=req.device_trusted, voiceprint_ok=req.voiceprint_ok,
-            second_speaker=req.second_speaker, utterance=req.text,
+            second_speaker=req.second_speaker, utterance=utterance,
             defense_enabled=req.defense_enabled, remark=step.params.get("remark", ""),
         )
     if step.tool in READ_ONLY_TOOLS:

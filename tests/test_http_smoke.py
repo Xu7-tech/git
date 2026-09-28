@@ -200,6 +200,30 @@ class HttpSmokeCase(unittest.TestCase):
         notes = self.get("/auth/pending")["notifications"]
         self.assertTrue(any(n["type"] == "card_loss" for n in notes))
 
+    def test_11_balance_reflects_every_transfer(self):
+        """连续转账后，账户余额必须每次都更新（不能滞后一笔）。"""
+        self.post("/system/reset")
+        before = self.get("/system/status")["elder"]["balance"]
+        for i in range(1, 4):
+            p = self.post("/agent/plan", {"text": "给老李转五十块", "hour": 10})
+            self.post("/agent/confirm", {"session_id": p["session_id"], "ack_voice": True})
+            after = self.get("/system/status")["elder"]["balance"]
+            self.assertAlmostEqual(after, before - 50 * i, places=2,
+                                   msg=f"第 {i} 次转账后余额没有同步")
+
+    def test_12_multi_turn_slot_filling_over_http(self):
+        self.post("/system/reset")
+        p = self.post("/agent/plan", {"text": "给老李转", "hour": 10})
+        self.assertEqual(p["status"], "clarify")
+        q = self.post("/agent/plan", {"text": "五百块", "hour": 10,
+                                      "session_id": p["session_id"]})
+        self.assertEqual(q["status"], "pending_confirm")
+        self.assertEqual(q["plan"]["steps"][0]["params"]["amount"], 500.0)
+        # 500 元超过免密额度，属于 L1，需要弹窗确认
+        c = self.post("/agent/confirm", {"session_id": q["session_id"],
+                                         "ack_voice": True, "ack_popup": True})
+        self.assertEqual(c["status"], "executed")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

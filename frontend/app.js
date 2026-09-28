@@ -4,7 +4,8 @@ const $ = (id) => document.getElementById(id);
 const state = { session: null, plan: null, popupOpenedAt: 0, dialect: "mandarin", running: false };
 
 async function api(path, options) {
-  const res = await fetch(path, options);
+  // 账户余额这类状态随时在变，禁掉浏览器缓存，保证刷新一定拿到最新值
+  const res = await fetch(path, { cache: "no-store", ...options });
   const text = await res.text();
   let data;
   try { data = text ? JSON.parse(text) : {}; } catch { data = { raw: text }; }
@@ -129,7 +130,10 @@ async function send(text) {
   state.running = true;
   try {
     const payload = await post("/agent/plan", {
-      text: text.trim(), dialect: state.dialect === "cantonese" ? "cantonese" : "auto",
+      text: text.trim(),
+      dialect: state.dialect === "cantonese" ? "cantonese" : "auto",
+      // 带上上一轮会话：如果上一轮停在追问，这一句会被当作缺失信息的回答
+      session_id: state.session || null,
     });
     state.plan = payload;
     state.session = payload.session_id;
@@ -162,12 +166,12 @@ function renderResponse(p) {
   if (p.status === "clarify") {
     if (p.options && p.options.length) {
       options.hidden = false;
-      const amt = (p.plan.intent.slots && p.plan.intent.slots.amount) || "";
       p.options.forEach((o) => {
         const b = document.createElement("button");
         b.className = "option-btn";
         b.innerHTML = `<b>${o.name}</b><br><span class="muted">${o.note}</span>`;
-        b.onclick = () => send(`给${o.name}转${amt}元`);
+        // 只说名字即可，后端会把它并进上一轮的转账意图
+        b.onclick = () => send(o.name);
         options.appendChild(b);
       });
     }
@@ -283,6 +287,7 @@ async function doConfirm(voice, popup, hesitationMs) {
     renderResponse(payload);
     speak(payload.elder_text);
     loadSide();
+    loadStatus();
   } catch (err) {
     toast("确认失败：" + err.message);
   }
@@ -304,6 +309,8 @@ function renderWaiting(p) {
       state.plan = done;
       renderResponse(done);
       speak(done.elder_text || done.result.steps[0].summary);
+      loadStatus();
+      loadSide();
       toast("子女已同意，转账完成");
     } else if (t.status === "rejected" || t.status === "expired") {
       clearInterval(poll);
@@ -383,6 +390,7 @@ window.__cancelSub = async () => {
   await post("/mock-bank/subscriptions/cancel", { subscription_id: bad.id });
   toast(`已取消「${bad.merchant}」`);
   loadSide();
+  loadStatus();
 };
 
 /* ---------------- 子女端 ---------------- */

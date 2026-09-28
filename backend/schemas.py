@@ -97,6 +97,9 @@ class PersonaProfile(BaseModel):
 
 class PlanRequest(BaseModel):
     text: str
+    # 上一轮的会话 id。若上一轮停在"追问"状态，这一句会被当作缺失信息的回答，
+    # 补进原意图，而不是当成一条全新指令。
+    session_id: str | None = None
     dialect: Literal["auto", "mandarin", "cantonese"] = "auto"
     elder_id: str = "E001"
     speaker: str = "elder"

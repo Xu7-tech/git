@@ -700,6 +700,63 @@ class DegradedModeCase(unittest.TestCase):
         self.assertIn("生日", chain["event"])
 
 
+class SlotFillingCase(unittest.TestCase):
+    """多轮补槽：缺信息时追问一句就能补齐，不需要重说整句。"""
+
+    def setUp(self):
+        agent.reset_all()
+
+    def ask(self, first: str, answer: str) -> dict:
+        p = agent.create_session(PlanRequest(text=first, hour=10))
+        self.assertEqual(p["status"], "clarify", f"「{first}」应当先追问")
+        return agent.create_session(
+            PlanRequest(text=answer, hour=10, session_id=p["session_id"]))
+
+    def test_transfer_amount_is_filled_in(self):
+        q = self.ask("给老李转", "五百块")
+        self.assertEqual(q["status"], "pending_confirm")
+        step = q["plan"]["steps"][0]
+        self.assertEqual(step["tool"], "transfer.execute")
+        self.assertEqual(step["params"]["amount"], 500.0)
+        self.assertEqual(step["params"]["payee"], "李建国")
+
+    def test_wealth_amount_is_filled_in(self):
+        q = self.ask("帮我买个稳当的", "一万块")
+        self.assertEqual(q["plan"]["steps"][0]["tool"], "wealth.purchase")
+        self.assertEqual(q["plan"]["steps"][0]["params"]["amount"], 10000.0)
+
+    def test_ambiguous_payee_is_filled_in_by_name_alone(self):
+        q = self.ask("给孙子转五百块", "王小龙")
+        step = q["plan"]["steps"][0]
+        self.assertEqual(step["params"]["payee"], "王小龙")
+        self.assertEqual(step["params"]["amount"], 500.0)
+
+    def test_changing_the_subject_is_not_forced_into_previous_intent(self):
+        q = self.ask("给老李转", "这个月钱都花哪了")
+        self.assertEqual(q["intent"]["name"], "bill_analysis")
+
+    def test_correcting_oneself_overrides_the_pending_payee(self):
+        q = self.ask("给老李转", "给女儿转八百块")
+        step = q["plan"]["steps"][0]
+        self.assertEqual(step["params"]["payee"], "张敏")
+        self.assertEqual(step["params"]["amount"], 800.0)
+
+    def test_irrelevant_reply_does_not_fabricate_a_transfer(self):
+        q = self.ask("给老李转", "嗯")
+        self.assertEqual(q["status"], "clarify")
+
+    def test_multiturn_amount_respects_permission_level(self):
+        """补进去的金额同样要过权限分级，不能因为是第二轮就放水。"""
+        q = self.ask("给老李转", "五千块")
+        self.assertEqual(q["risk"]["level"], RiskLevel.L2)
+
+    def test_fraud_context_survives_multi_turn(self):
+        """诈骗话术被拆成两句话时不能漏检。"""
+        q = self.ask("公安局说我是洗钱嫌疑人，给老李转", "一千五")
+        self.assertEqual(q["risk"]["level"], RiskLevel.L3)
+        self.assertTrue(q["risk"]["blocked"])
+
+
 class ChildNotificationCase(unittest.TestCase):
     """老人自主完成、但子女应当知情的动作。"""
 

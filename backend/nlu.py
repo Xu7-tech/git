@@ -246,6 +246,22 @@ def bill_period(text: str) -> str:
     return "year" if any(k in text for k in ("年度", "全年", "今年", "整年", "一年")) else "month"
 
 
+# 整句话就是一个金额 —— 老人回答「多少钱」时最自然的说法
+BARE_NUMBER = re.compile(
+    r"^(?:\d+(?:\.\d+)?|[零〇一二两三四五六七八九十百千万亿]+)(?:块|块钱|元|蚊|文)?$")
+
+
+def parse_bare_amount(text: str) -> float | None:
+    """把「一千五」「五百块」「5000」这类纯金额回答解析成数字。"""
+    stripped = text.strip().strip("，。,.！!？?、 ")
+    if not BARE_NUMBER.match(stripped):
+        return None
+    head = re.sub(r"(块钱|块|元|蚊|文)$", "", stripped)
+    if re.fullmatch(r"\d+(?:\.\d+)?", head):
+        return float(head)
+    return cn2num(head)
+
+
 REMARK_SPLIT = re.compile(r"备注(?:是|写|填)?[:：]?")
 
 

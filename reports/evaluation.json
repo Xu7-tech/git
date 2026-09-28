@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-09-28T19:33:41",
+  "generated_at": "2026-09-28T20:21:01",
   "environment": {
     "llm": "rule-engine-fallback",
     "asr": "browser-native-stt",
@@ -351,9 +351,9 @@
   },
   "latency": {
     "rounds": 200,
-    "p50_ms": 0.065,
-    "p95_ms": 0.207,
-    "max_ms": 0.384,
+    "p50_ms": 0.071,
+    "p95_ms": 0.164,
+    "max_ms": 0.34,
     "note": "当前为降级模式（确定性规则解析器）的本地耗时；接入云端 LLM 后该指标由网络与模型延迟主导。"
   },
   "scenario_coverage": {
@@ -422,5 +422,5 @@
     }
   },
   "scenario_coverage_rate": 100.0,
-  "elapsed_seconds": 0.04
+  "elapsed_seconds": 0.03
 }
