@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.idea/
+.vscode/
+
+# 交付压缩包与 PPT 导出的临时预览图，不进仓库
+*.zip
+deliverables/_ppt_preview/
+.DS_Store
+Thumbs.db

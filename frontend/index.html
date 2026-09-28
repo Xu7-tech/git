@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>语音数字银行管家 · 适老版</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark">银</span>
+    <div>
+      <h1>语音数字银行管家</h1>
+      <p class="brand-sub">适老版 · 语音优先 · 权限分级 · 幻觉与注入双防御</p>
+    </div>
+  </div>
+  <nav class="tabs" id="tabs">
+    <button class="tab active" data-view="elder">老人端</button>
+    <button class="tab" data-view="child">子女端</button>
+    <button class="tab" data-view="demo">攻防演示台</button>
+  </nav>
+  <div class="topbar-right">
+    <label class="switch">
+      <span>方言</span>
+      <select id="dialect">
+        <option value="mandarin">普通话</option>
+        <option value="cantonese">粤语</option>
+      </select>
+    </label>
+    <span class="pill" id="statusPill">连接中…</span>
+    <button class="ghost" id="resetBtn">重置演示数据</button>
+  </div>
+</header>
+
+<!-- ================= 老人端 ================= -->
+<main class="view active" id="view-elder">
+  <section class="elder-main">
+    <div class="account-strip" id="accountStrip"></div>
+
+    <div class="mic-zone">
+      <button class="mic" id="micBtn" aria-label="按住说话">
+        <span class="mic-icon">🎤</span>
+        <span class="mic-label" id="micLabel">点一下说话</span>
+      </button>
+      <p class="mic-hint" id="micHint">也可以直接在下框里打字，或用下面的常用说法</p>
+      <div class="composer">
+        <input id="textInput" type="text" placeholder="比如：给孙子转五百块" autocomplete="off">
+        <button class="primary" id="sendBtn">发送</button>
+      </div>
+      <div class="chips" id="chips"></div>
+    </div>
+
+    <article class="card response" id="responseCard" hidden>
+      <div class="response-head">
+        <span class="badge" id="riskBadge">—</span>
+        <h2 id="responseTitle">管家回话</h2>
+        <button class="ghost small" id="speakBtn">🔊 再念一遍</button>
+      </div>
+      <p class="response-text" id="responseText"></p>
+      <div class="response-actions" id="responseActions"></div>
+      <div class="options" id="optionsBox" hidden></div>
+    </article>
+  </section>
+
+  <aside class="elder-side">
+    <article class="card">
+      <h3>本月资金安全体检</h3>
+      <div id="billReport" class="muted">点上面说一句"这个月钱都花哪了"</div>
+    </article>
+    <article class="card">
+      <h3>扣费哨兵</h3>
+      <div id="subsBox" class="muted">正在扫描自动扣费…</div>
+    </article>
+    <article class="card">
+      <h3>守护日历</h3>
+      <div id="guardBox" class="muted">加载中…</div>
+    </article>
+    <article class="card">
+      <h3>近 5 条操作留痕</h3>
+      <ol id="auditMini" class="audit-mini"></ol>
+    </article>
+  </aside>
+</main>
+
+<!-- ================= 子女端 ================= -->
+<main class="view" id="view-child">
+  <section class="child-col">
+    <article class="card">
+      <div class="card-head">
+        <h2>待我确认的授权请求</h2>
+        <span class="pill warn" id="pendingCount">0</span>
+      </div>
+      <p class="muted">老人发起大额或异常转账时，会在这里生成一张一次性授权票据。您只能维持或下调金额，不能改收款人。</p>
+      <div id="ticketsBox" class="tickets"></div>
+    </article>
+
+    <article class="card">
+      <h2>代购 / 代缴</h2>
+      <p class="muted">为老人办理固定的生活支出与低风险理财，仍然留痕可审计。</p>
+      <div class="chips">
+        <button class="ghost" data-proxy="水电燃气费">代缴水电燃气费</button>
+        <button class="ghost" data-proxy="物业费">代缴物业费</button>
+        <button class="ghost" data-proxy="国债三年期">代购国债（R1）</button>
+        <button class="ghost" data-proxy="安心存三个月">代购安心存（R1）</button>
+      </div>
+      <div id="proxyBox" class="muted"></div>
+    </article>
+  </section>
+
+  <section class="child-col">
+    <article class="card">
+      <h2>额度与权限管理</h2>
+      <p class="muted">子女可以远程收紧老人的额度，但不能放宽。老人临时提额必须走您审批。</p>
+      <div class="form-row">
+        <label>免密额度（元）</label>
+        <input type="number" id="freeLimit" min="0" max="2000" step="50">
+        <button class="primary" id="saveLimits">提交收紧</button>
+      </div>
+      <div class="limits-note" id="limitsNote"></div>
+    </article>
+
+    <article class="card">
+      <h2>守护日历远程预置</h2>
+      <p class="muted">预置一条事件驱动的动作链，到日子自动提醒，执行前仍会经过权限分级。</p>
+      <div class="form-row">
+        <label>事件</label>
+        <input type="text" id="guardEvent" placeholder="比如：老伴生日">
+      </div>
+      <div class="form-row">
+        <label>日期</label>
+        <input type="date" id="guardDate">
+      </div>
+      <div class="form-row">
+        <label>提前天数</label>
+        <input type="number" id="guardAdvance" value="2" min="0" max="30">
+      </div>
+      <div class="form-row">
+        <label>锁定活期（元）</label>
+        <input type="number" id="guardLock" value="1000" min="0" step="100">
+      </div>
+      <button class="primary" id="deployGuard">预置动作链</button>
+      <div id="deployBox" class="muted"></div>
+    </article>
+
+    <article class="card">
+      <h2>实时通知</h2>
+      <ul id="notifyBox" class="notify"></ul>
+    </article>
+  </section>
+</main>
+
+<!-- ================= 攻防演示台 ================= -->
+<main class="view" id="view-demo">
+  <section class="demo-head card">
+    <h2>电信诈骗话术注入攻击 vs 防御</h2>
+    <p class="muted">左栏是"只有语音识别和意图理解"的裸智能体，右栏是完整防御链路。两侧银行状态互相隔离。</p>
+    <div class="chips" id="scriptChips"></div>
+  </section>
+  <section class="demo-grid">
+    <article class="card danger-col">
+      <div class="card-head">
+        <h2>无防御</h2>
+        <span class="pill danger" id="vulnLoss">—</span>
+      </div>
+      <div class="trace" id="traceVuln"></div>
+    </article>
+    <article class="card ok-col">
+      <div class="card-head">
+        <h2>有防御</h2>
+        <span class="pill ok" id="defendLoss">—</span>
+      </div>
+      <div class="trace" id="traceDefend"></div>
+    </article>
+  </section>
+  <section class="card verdict" id="verdictBox" hidden>
+    <h2 id="verdictText"></h2>
+    <p class="muted" id="verdictExpect"></p>
+  </section>
+</main>
+
+<!-- 二次确认弹窗（大字版，防误触延迟激活） -->
+<div class="modal-mask" id="confirmMask" hidden>
+  <div class="modal" role="dialog" aria-modal="true">
+    <h2>请您再确认一次</h2>
+    <p class="modal-line">收款人 <b id="cfPayee">—</b></p>
+    <p class="modal-amount" id="cfAmount">—</p>
+    <p class="modal-note" id="cfNote"></p>
+    <div class="modal-actions">
+      <button class="ghost big" id="cfCancel">我再说一遍</button>
+      <button class="primary big" id="cfOk" disabled>确认转账</button>
+    </div>
+    <p class="modal-countdown" id="cfCountdown"></p>
+  </div>
+</div>
+
+<div class="toast" id="toast" hidden></div>
+
+<script src="/app.js"></script>
+</body>
+</html>

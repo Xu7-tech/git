@@ -1,0 +1,140 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1160 700" width="1160" height="700"
+     font-family="Microsoft YaHei, PingFang SC, Noto Sans CJK SC, sans-serif">
+  <defs>
+    <linearGradient id="titleBg" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#123f86"/>
+      <stop offset="100%" stop-color="#1f5fbf"/>
+    </linearGradient>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3"
+            orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#7c8aa0"/>
+    </marker>
+  </defs>
+
+  <rect width="1160" height="700" fill="#f7f9fc"/>
+  <rect x="0" y="0" width="1160" height="58" fill="url(#titleBg)"/>
+  <text x="28" y="37" fill="#ffffff" font-size="21" font-weight="700">
+    老年人语音数字银行管家 · 系统架构
+  </text>
+  <text x="1132" y="36" fill="#cfe0f8" font-size="13" text-anchor="end">
+    权限分级由规则引擎独占裁定 · LLM 无资金接口调用权
+  </text>
+
+  <!-- 分层标签 -->
+  <g fill="#4a5a70" font-size="13" font-weight="700">
+    <text x="18" y="108">用户触点</text>
+    <text x="18" y="205">接入层</text>
+    <text x="18" y="305">智能体层</text>
+    <text x="18" y="562">数据层</text>
+    <text x="18" y="668">留痕</text>
+  </g>
+  <g stroke="#dfe5ee" stroke-width="1">
+    <line x1="14" y1="130" x2="1146" y2="130"/>
+    <line x1="14" y1="228" x2="1146" y2="228"/>
+    <line x1="14" y1="496" x2="1146" y2="496"/>
+    <line x1="14" y1="618" x2="1146" y2="618"/>
+  </g>
+
+  <!-- 用户触点 -->
+  <g>
+    <rect x="120" y="70" width="300" height="48" rx="10" fill="#ffffff" stroke="#1f5fbf" stroke-width="2"/>
+    <text x="270" y="100" text-anchor="middle" font-size="15" fill="#16202e" font-weight="700">老人端（大字版 · 语音优先）</text>
+    <rect x="436" y="70" width="300" height="48" rx="10" fill="#ffffff" stroke="#1f5fbf" stroke-width="2"/>
+    <text x="586" y="100" text-anchor="middle" font-size="15" fill="#16202e" font-weight="700">子女端（授权 · 代购代缴）</text>
+    <rect x="752" y="70" width="300" height="48" rx="10" fill="#ffffff" stroke="#1f5fbf" stroke-width="2"/>
+    <text x="902" y="100" text-anchor="middle" font-size="15" fill="#16202e" font-weight="700">攻防演示台（左右屏对比）</text>
+  </g>
+
+  <!-- 接入层 -->
+  <rect x="120" y="152" width="932" height="56" rx="10" fill="#e8f0fe" stroke="#1f5fbf" stroke-width="2"/>
+  <text x="586" y="176" text-anchor="middle" font-size="15" fill="#123f86" font-weight="700">
+    FastAPI 网关　·　REST 接口 + WebSocket /ws/auth（授权请求实时推送）
+  </text>
+  <text x="586" y="196" text-anchor="middle" font-size="12.5" fill="#4a5a70">
+    请求校验 · 静态资源托管 · 交互式 API 文档
+  </text>
+
+  <!-- 智能体层：四个组件 -->
+  <g>
+    <!-- 1 语音适配器 -->
+    <rect x="120" y="252" width="225" height="230" rx="12" fill="#ffffff" stroke="#dfe5ee" stroke-width="2"/>
+    <rect x="120" y="252" width="225" height="34" rx="12" fill="#17845a"/>
+    <rect x="120" y="274" width="225" height="12" fill="#17845a"/>
+    <text x="232" y="275" text-anchor="middle" font-size="14" fill="#ffffff" font-weight="700">语音适配器</text>
+    <text x="136" y="308" font-size="12.5" fill="#16202e">ASR：讯飞 IAT（粤语通道）</text>
+    <text x="136" y="330" font-size="12.5" fill="#16202e">TTS：讯飞在线合成</text>
+    <text x="136" y="356" font-size="12" fill="#7c8aa0">↓ 未配置凭据时自动降级</text>
+    <text x="136" y="378" font-size="12.5" fill="#16202e">浏览器原生识别 / 合成</text>
+    <text x="136" y="400" font-size="12.5" fill="#16202e">预置语料兜底（断网可用）</text>
+    <text x="136" y="434" font-size="11.5" fill="#7c8aa0">voice.py · 单接入点可整体替换</text>
+    <text x="136" y="456" font-size="11.5" fill="#7c8aa0">方言：普通话 / 粤语</text>
+  </g>
+  <g>
+    <!-- 2 意图理解 -->
+    <rect x="361" y="252" width="225" height="230" rx="12" fill="#ffffff" stroke="#dfe5ee" stroke-width="2"/>
+    <rect x="361" y="252" width="225" height="34" rx="12" fill="#1f5fbf"/>
+    <rect x="361" y="274" width="225" height="12" fill="#1f5fbf"/>
+    <text x="473" y="275" text-anchor="middle" font-size="14" fill="#ffffff" font-weight="700">意图理解</text>
+    <text x="377" y="308" font-size="12.5" fill="#16202e">LLM：通义千问</text>
+    <text x="377" y="330" font-size="12.5" fill="#16202e">降级：确定性规则解析器</text>
+    <text x="377" y="356" font-size="12" fill="#7c8aa0">↓ 输出须与用户原话比对</text>
+    <text x="377" y="378" font-size="12.5" fill="#16202e" font-weight="700">一致性校验</text>
+    <text x="377" y="400" font-size="12" fill="#16202e">金额 / 收款人对不上即中止</text>
+    <text x="377" y="434" font-size="11.5" fill="#7c8aa0">nlu.py · 指令与数据分离</text>
+    <text x="377" y="456" font-size="11.5" fill="#c22b3c" font-weight="700">不持有资金接口调用权</text>
+  </g>
+  <g>
+    <!-- 3 规划器 -->
+    <rect x="602" y="252" width="225" height="230" rx="12" fill="#ffffff" stroke="#dfe5ee" stroke-width="2"/>
+    <rect x="602" y="252" width="225" height="34" rx="12" fill="#1f5fbf"/>
+    <rect x="602" y="274" width="225" height="12" fill="#1f5fbf"/>
+    <text x="714" y="275" text-anchor="middle" font-size="14" fill="#ffffff" font-weight="700">任务规划与会话</text>
+    <text x="618" y="308" font-size="12.5" fill="#16202e">Plan-and-Execute 规划器</text>
+    <text x="618" y="330" font-size="12.5" fill="#16202e">口语别名 → 收款人解析</text>
+    <text x="618" y="352" font-size="12.5" fill="#16202e">重名歧义澄清</text>
+    <text x="618" y="374" font-size="12.5" fill="#16202e">会话状态机与复述文本</text>
+    <text x="618" y="398" font-size="12.5" fill="#16202e">一次性授权票据</text>
+    <text x="618" y="430" font-size="11.5" fill="#7c8aa0">agent.py · 犹豫与动摇识别</text>
+    <text x="618" y="452" font-size="11.5" fill="#7c8aa0">守护日历 · 扣费哨兵</text>
+  </g>
+  <g>
+    <!-- 4 规则引擎 -->
+    <rect x="843" y="252" width="225" height="230" rx="12" fill="#fff6f6" stroke="#c22b3c" stroke-width="2.5"/>
+    <rect x="843" y="252" width="225" height="34" rx="12" fill="#c22b3c"/>
+    <rect x="843" y="274" width="225" height="12" fill="#c22b3c"/>
+    <text x="955" y="275" text-anchor="middle" font-size="14" fill="#ffffff" font-weight="700">规则引擎风控</text>
+    <text x="859" y="308" font-size="12.5" fill="#16202e" font-weight="700">权限分级 L0 – L3</text>
+    <text x="859" y="330" font-size="12" fill="#16202e">L0 免密 ≤200 元</text>
+    <text x="859" y="350" font-size="12" fill="#16202e">L1 复述 + 大字弹窗</text>
+    <text x="859" y="370" font-size="12" fill="#16202e">L2 子女远程授权</text>
+    <text x="859" y="390" font-size="12" fill="#16202e">L3 直接阻断</text>
+    <text x="859" y="416" font-size="11.5" fill="#7c8aa0">反诈特征库 · 声纹校验</text>
+    <text x="859" y="436" font-size="11.5" fill="#7c8aa0">注入净化 · 第二说话人</text>
+    <text x="859" y="462" font-size="11.5" fill="#c22b3c" font-weight="700">权限裁定的唯一来源</text>
+  </g>
+
+  <!-- 数据层 -->
+  <rect x="120" y="518" width="948" height="76" rx="10" fill="#ffffff" stroke="#dfe5ee" stroke-width="2"/>
+  <text x="140" y="544" font-size="14" fill="#123f86" font-weight="700">
+    模拟银行核心（沙箱环境）
+  </text>
+  <text x="140" y="568" font-size="12.5" fill="#4a5a70">
+    账户与余额　·　交易流水　·　理财持仓　·　卡片与限额　·　订阅代扣　·　授权票据　·　守护日历
+  </text>
+  <text x="140" y="587" font-size="11.5" fill="#7c8aa0">
+    bank.py · 全部资金操作在此落账，运行前无需真实银行系统
+  </text>
+
+  <!-- 审计 -->
+  <rect x="120" y="636" width="948" height="46" rx="10" fill="#fdf3e2" stroke="#a86617" stroke-width="2"/>
+  <text x="594" y="664" text-anchor="middle" font-size="13.5" fill="#a86617" font-weight="700">
+    全链路审计日志：意图 → 计划 → 规则判定 → 确认 → 执行（每笔可回放）
+  </text>
+
+  <!-- 层间箭头 -->
+  <g stroke="#7c8aa0" stroke-width="2" marker-end="url(#arrow)">
+    <line x1="586" y1="120" x2="586" y2="148"/>
+    <line x1="586" y1="210" x2="586" y2="248"/>
+    <line x1="586" y1="484" x2="586" y2="514"/>
+  </g>
+</svg>
