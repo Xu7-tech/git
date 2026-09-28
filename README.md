@@ -14,11 +14,10 @@
 | **① 可执行代码**：Agent 系统源码 | [`backend/`](backend/)　·　[`frontend/`](frontend/) |
 | 　·　沙箱银行环境 | [`backend/bank.py`](backend/bank.py)（账户 / 流水 / 理财 / 卡片 / 订阅 / 限额 / 票据，不接真实银行） |
 | 　·　评测脚本 | [`scripts/evaluate.py`](scripts/evaluate.py)　→　[`reports/评测指标结果.md`](reports/评测指标结果.md) |
-| **② 作品介绍 PPT**（14 页） | [`deliverables/作品介绍.pptx`](deliverables/作品介绍.pptx)　·　截图步骤见 [`docs/演示截图操作手册.md`](docs/演示截图操作手册.md) |
+| **② 作品介绍 PPT**（14 页） | [`deliverables/作品介绍.pptx`](deliverables/作品介绍.pptx)：痛点背景 → 系统架构 → 场景演示（9 张实拍截图 + 3 段内嵌录屏）→ 安全机制 → 技术创新 → 商业价值 |
 | **③ 技术文档** | 本 README　·　[架构图](docs/images/architecture.svg)　·　[场景覆盖表](docs/场景覆盖表.md)　·　[安全测试用例](docs/安全测试用例.md)　·　[评测指标结果](reports/评测指标结果.md) |
 | 　·　完整技术方案 | [`docs/技术方案.md`](docs/技术方案.md)（架构、数据流、接口契约、合规边界、答辩要点） |
-| **④ 作品演示视频**（3–5 分钟） | 全流程录屏，逐段时间轴与口播词见 [`docs/演示视频录制脚本.md`](docs/演示视频录制脚本.md) |
-| 　·　PPT 演示截图 | 6 处留白位的截图步骤见 [`docs/演示截图操作手册.md`](docs/演示截图操作手册.md) |
+| **④ 作品演示视频**（3–5 分钟） | [`deliverables/作品演示视频.mp4`](deliverables/作品演示视频.mp4)：自然语言对话 → 转账 / 理财 / 挂卡 / 跨场景联动全流程 |
 
 ---
 
@@ -186,7 +185,8 @@ backend/      Agent 系统源码
   main.py       FastAPI 网关与全部接口
 frontend/     老人端 / 子女端 / 攻防演示台三视图（原生 HTML/CSS/JS，无构建步骤）
 scripts/      评测脚本 evaluate.py、PPT 生成器 make_ppt.py
-docs/         技术方案、场景覆盖表、安全测试用例、演示截图手册、架构图
+docs/         技术方案、场景覆盖表、安全测试用例、架构图
+deliverables/ 作品介绍 PPT、作品演示视频
 reports/      评测指标结果（JSON + Markdown）
 deliverables/ 作品介绍 PPT
 tests/        107 项验收测试 + 端到端 HTTP 冒烟测试
@@ -217,4 +217,5 @@ tests/        107 项验收测试 + 端到端 HTTP 冒烟测试
 - 方言目前真实支持粤语与普通话对比，其余方言作为可扩展项
   （扩展 `bank.ALIASES` 与 `nlu.CANTONESE_MARKERS` 即可）；
 - 云端 ASR / LLM 需要网络与凭据，未配置时走降级路径，该路径已完整验证；
-- 作品介绍 PPT 中的 6 处演示截图位已留白，按 [`docs/演示截图操作手册.md`](docs/演示截图操作手册.md) 补入即可。
+- 作品介绍 PPT 与演示视频为最终成片，均已放入 `deliverables/`；
+  PPT 内含 3 段内嵌录屏（63 MB 媒体，逐字节与源文件一致）。
