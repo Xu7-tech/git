@@ -343,11 +343,14 @@ def get_audit(limit: int = 100):
 @app.get("/system/status", tags=["系统"])
 def system_status():
     llm_live = nlu.llm_available()
+    cfg = nlu.llm_config()
     cloud_asr = voice.stt_available()
     cloud_tts = voice.tts_available()
     return {
         # 意图理解：系统的 AI 核心，是否走高模型
-        "llm_provider": "qwen(通义千问)" if llm_live else "rule-engine-fallback",
+        "llm_provider": cfg["model"] if llm_live else "rule-engine-fallback",
+        "llm_base_url": cfg["base_url"],
+        "llm_model": cfg["model"],
         "llm_live": llm_live,
         # /asr 接口可用的通道 vs 随仓库的 Web 界面实际走的通道
         "asr_provider": "xfyun-iat" if cloud_asr else "browser-native-stt",
@@ -357,9 +360,10 @@ def system_status():
         # 而浏览器界面并不经过云端 ASR，导致配上大模型后这个字段仍然是 true，容易让人误判。
         "degraded_mode": not llm_live,
         "ai_stack": {
-            "意图理解": "通义千问" if llm_live else "本地规则解析器（降级）",
+            "意图理解": cfg["model"] if llm_live else "本地规则解析器（降级）",
             "任务规划": "Plan-and-Execute",
             "幻觉拦截": "槽位一致性校验",
+            "语义反诈": "大模型信号 → 规则引擎裁决（上限 L2）",
             "资金风控": "确定性规则引擎 L0–L3",
             "语音识别": "浏览器原生识别",
             "语音合成": "讯飞在线合成" if cloud_tts else "浏览器语音合成",

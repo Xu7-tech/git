@@ -54,9 +54,10 @@ python -m uvicorn backend.main:app --host 127.0.0.1 --port 8077
 
 | 环节 | 默认（未配置密钥） | 配置密钥后 | 代码位置 |
 |---|---|---|---|
-| **意图理解** | 确定性规则解析器 | **通义千问 qwen-plus** | `backend/nlu.py::parse_intent_llm` |
-| **任务规划** | Plan-and-Execute 规划器 | 同左（与模型解耦） | `backend/agent.py::build_plan` |
-| **幻觉拦截** | 槽位一致性校验 | 同左 | `backend/nlu.py::verify_consistency` |
+| **意图理解** | 确定性规则解析器 | **大模型（默认 DeepSeek `deepseek-chat`）** | `backend/nlu.py::call_llm` |
+| **复合指令拆解** | 单意图 | **大模型一次返回多意图，Plan-and-Execute 合并** | `backend/agent.py::build_multi_plan` |
+| **语义反诈** | 仅关键词特征库 | **大模型语义信号 → 规则引擎裁决（上限 L2）** | `backend/risk.py::evaluate` |
+| **幻觉拦截** | 槽位一致性校验 + 数字必须在原话里出现 | 同左 | `backend/nlu.py::verify_consistency` |
 | **资金风控** | 规则引擎 L0–L3（**刻意不使用模型**） | 同左 | `backend/risk.py::evaluate` |
 | 语音识别 | 浏览器原生识别（Edge / Chrome，支持粤语） | 同左，另可通过 `/asr` 接口接云端 | `backend/voice.py::transcribe` |
 | 语音合成 | 浏览器语音合成 | **讯飞在线合成 TTS** | `backend/voice.py::_provider_tts` |
@@ -67,42 +68,52 @@ python -m uvicorn backend.main:app --host 127.0.0.1 --port 8077
 配置密钥后自动切换到云端模型 —— 这是可用性设计，不代表系统不含 AI 能力。
 大模型在链路中的位置见下一节「系统架构」。
 
-### 配置通义千问（启用 LLM 意图理解）
+### 配置大模型（启用 LLM 意图理解）
 
-1. 在阿里云百炼控制台 <https://bailian.console.aliyun.com> 创建 API-KEY；
-2. 启动前设置环境变量：
+接入的是**任意 OpenAI 兼容接口**，默认指向 DeepSeek，换供应商只改 `LLM_BASE_URL`：
 
-   ```powershell
-   $env:DASHSCOPE_API_KEY = "sk-你的密钥"
-   $env:LLM_MODEL = "qwen-plus"     # 可选，默认即 qwen-plus
-   .\run.ps1
-   ```
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `LLM_BASE_URL` | `https://api.deepseek.com/v1` | 端点取 `{base}/chat/completions`。通义填 `https://dashscope.aliyuncs.com/compatible-mode/v1`，本地 Ollama 填 `http://127.0.0.1:11434/v1` |
+| `LLM_API_KEY` | 空 | 不填即走降级路径 |
+| `LLM_MODEL` | `deepseek-chat` | 不用 `deepseek-reasoner`：它不支持 `response_format: json_object` |
 
-   ```bash
-   export DASHSCOPE_API_KEY=sk-你的密钥
-   ./run.sh
-   ```
+**方式一：写进 `.env`（推荐，演示机器上不用每次重设）**
+
+```bash
+cp .env.example .env      # 然后填入自己的密钥
+```
+
+`.env` 已被 `.gitignore` 排除，密钥不会进仓库；已存在的环境变量优先于文件内容。
+
+**方式二：环境变量**
+
+```powershell
+$env:LLM_API_KEY = "sk-你的密钥"
+.\run.ps1
+```
 
 **怎么确认已经生效**：访问 <http://127.0.0.1:8077/system/status>，看到
 
 ```json
-{ "llm_provider": "qwen(通义千问)", "llm_live": true, "degraded_mode": false }
+{ "llm_live": true, "llm_model": "deepseek-chat",
+  "llm_base_url": "https://api.deepseek.com/v1", "degraded_mode": false }
 ```
 
-老人端顶栏的黄色胶囊也会从「降级模式运行（规则引擎 + 浏览器语音）」变成「LLM 在线 · 供应商」。
+老人端顶栏的黄色胶囊也会从「意图理解：本地规则解析 · 离线可跑」变成「意图理解：deepseek-chat」。
 
 ### 大模型在链路里的位置
 
 ```
 语音 / 文字
    ↓
-意图理解 ── 通义千问（或未配置时的规则解析器）→ 结构化槽位 {intent, amount, payee}
+意图理解 ── 大模型（或未配置时的规则解析器）→ 结构化槽位 {intent, amount, payee}
    ↓
-一致性校验 ── 槽位必须能在用户原话里找到，对不上即中止或回落规则解析（防幻觉）
+一致性校验 ── 槽位必须能在用户原话里找到；模型补的金额必须真的出现在原话里
    ↓
-任务规划 ── Plan-and-Execute 拆解步骤，生成老人能听懂的复述文本
+任务规划 ── Plan-and-Execute 把多件事拆成步骤，生成老人能听懂的复述文本
    ↓
-规则引擎 ── L0–L3 权限裁定（模型无权参与）
+规则引擎 ── L0–L3 权限裁定 + 消化模型的反诈信号（模型无权参与裁定）
    ↓
 复述确认 → 执行落账 → 审计留痕
 ```
@@ -110,6 +121,34 @@ python -m uvicorn backend.main:app --host 127.0.0.1 --port 8077
 **LLM 只做语义解析，不持有任何资金接口调用权。** 即使模型返回了错误参数，
 `verify_consistency` 也会因为"槽位对不上用户原话"而拦截并回落到规则解析 ——
 这条防线有 5 条专项测试盯着（见 [安全测试用例](docs/安全测试用例.md) 第三节）。
+
+**双通道仲裁**：规则解析器认得这句话时以规则为准（确定性优先），只有它认不出来时才采用模型结果 ——
+那正是规则表的盲区。反例是「每个月1号给老李转五百块」：如果让模型说了算，它会把定期转账判成
+一次性转账，**资金行为被静默改变**。现在结构性规则优先，这类误判被挡住，并有专项测试钉住。
+
+### 两项由大模型解锁的能力
+
+**复合指令任务规划。** 一句话里有多件事时，模型一次返回全部意图，规划器合并成一个计划、
+一次确认执行：
+
+```
+老人：给女儿转五百，顺便看看这个月花了多少
+管家：我准备做2件事：第1件，向 张敏 转出 500.00 元；第2件，生成月度资金安全体检报告。要一起办吗？
+```
+
+上限是 **1 个动资金步骤 + 2 个只读步骤**：一张授权票据只绑一笔钱，超出时会明确告诉老人
+「一次只办得了一件动钱的事」，不会出现一次确认背后藏着多张票据的糊涂账。
+权限判定对全部步骤取最严等级 —— 否则「查个账顺便转五万」就绕过了风控。
+
+**语义反诈信号。** 关键词特征库只能匹配固定说法，换个说法就绕过去了。
+模型在每次解析时顺带返回一路语义可疑度，作为**信号**喂给规则引擎：
+
+- 信号**只能加不能减**，已有等级不会被模型拉低；
+- 信号的天花板是 **L2（转子女授权）**，**永不越过 L2** —— L3 硬阻断仍然只由确定性证据触发
+  （高危收款人、关键词命中、注入命中、越界）。模型误判不会把钱直接锁死，也不会把钱放走。
+
+演示台为此加了第 13 条剧本 `ATK-13 关键词盲区的语义诈骗`（"给老李转八百块，是别人让我帮着垫的"，
+不含任何反诈关键词），未接入模型时会明示「该剧本依赖大模型」而不是假装测过。
 
 ### 配置讯飞语音合成（可选）
 
@@ -211,7 +250,7 @@ $env:XFYUN_TTS_VCN     = "xiaoyan"      # 音色；粤语需填账号可用的�
 ## 测试
 
 ```bash
-python -m unittest discover -s tests -v    # 107 项自动化测试
+python -m unittest discover -s tests -v    # 139 项自动化测试
 python scripts/evaluate.py                 # 评测指标
 ```
 
@@ -273,7 +312,7 @@ docs/         技术方案、场景覆盖表、安全测试用例、架构图
 deliverables/ 作品介绍 PPT、作品演示视频
 reports/      评测指标结果（JSON + Markdown）
 deliverables/ 作品介绍 PPT
-tests/        107 项验收测试 + 端到端 HTTP 冒烟测试
+tests/        139 项验收测试 + 端到端 HTTP 冒烟测试
 ```
 
 ---
@@ -284,7 +323,7 @@ tests/        107 项验收测试 + 端到端 HTTP 冒烟测试
 
 | 能力 | 唯一接入点 | 当前实现 |
 |---|---|---|
-| 意图理解 | `backend/nlu.py::parse_intent_llm` | 通义千问（OpenAI 兼容接口），可换成任意同级模型 |
+| 意图理解 | `backend/nlu.py::call_llm` | 任意 OpenAI 兼容接口，默认 DeepSeek `deepseek-chat` |
 | 语音识别 | `backend/voice.py::_provider_stt` | 讯飞语音听写 WebSocket 协议（`accent=cantonese` 走粤语通道） |
 | 语音合成 | `backend/voice.py::_provider_tts` | 讯飞在线语音合成 WebSocket 协议 |
 

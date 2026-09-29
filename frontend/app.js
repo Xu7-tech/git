@@ -184,11 +184,12 @@ function renderResponse(p) {
   }
   if (p.status === "pending_auth") { renderWaiting(p); return; }
   if (p.status === "executed") {
-    addBtn(actions, "再念一遍结果", "ghost", () => speak(p.result.steps[0].summary));
+    addBtn(actions, "再念一遍结果", "ghost", () => speak(p.elder_text));
     return;
   }
   if (p.status === "pending_confirm") {
-    const step = p.plan.steps[0] || {};
+    // 复合指令可能有好几步，确认弹窗要盯住真正动钱的那一步
+    const step = fundStep(p.plan) || p.plan.steps[0] || {};
     const level = p.risk.level;
     if (level === "L2") {
       const b = addBtn(actions, "确认并请子女授权", "primary", () => doConfirm(true, true));
@@ -209,6 +210,12 @@ function addBtn(host, label, cls, fn) {
   b.onclick = fn;
   host.appendChild(b);
   return b;
+}
+
+const FUND_TOOLS = ["transfer.execute", "transfer.schedule", "wealth.purchase", "wealth.redeem"];
+
+function fundStep(plan) {
+  return ((plan && plan.steps) || []).find((s) => FUND_TOOLS.includes(s.tool));
 }
 
 function switchTo(view) {
@@ -336,12 +343,13 @@ async function loadStatus() {
     // 未配置模型时走的是同样在架构里的本地规则解析器，且离线也能完整演示。
     const pill = $("statusPill");
     pill.textContent = s.llm_live
-      ? `意图理解：${s.llm_provider}`
+      ? `意图理解：${s.llm_model}`
       : "意图理解：本地规则解析 · 离线可跑";
     pill.className = "pill " + (s.llm_live ? "ok" : "warn");
     pill.title = s.llm_live
-      ? "大模型已接入：意图理解走通义千问，其输出仍需通过与原话的一致性校验"
-      : "未配置 DASHSCOPE_API_KEY，意图理解走本地规则解析器。配置后自动切换到通义千问，"
+      ? `大模型已接入：意图理解走 ${s.llm_model}（${s.llm_base_url}），`
+        + "槽位仍由系统从原话抽取，模型改不了金额与收款人"
+      : "未配置 LLM_API_KEY，意图理解走本地规则解析器。配置后自动切换到云端大模型，"
         + "详见 README「AI 能力与模型接入」一节。";
     $("freeLimit").value = s.limits.free_limit;
     $("limitsNote").textContent =
@@ -524,10 +532,10 @@ async function loadScripts() {
   data.scripts.forEach((s) => {
     const b = document.createElement("button");
     b.className = "ghost";
-    b.textContent = `${s.id} ${s.name}`;
+    b.textContent = `${s.id} ${s.name}${s.requires_llm ? "（需大模型）" : ""}`;
     b.dataset.scriptId = s.id;
     b.setAttribute("aria-pressed", "false");
-    b.title = s.expected;
+    b.title = s.expected + (s.requires_llm ? "　·　该剧本需要大模型在线" : "");
     b.onclick = () => runScript(s.id);
     box.appendChild(b);
   });
@@ -550,6 +558,21 @@ async function runScript(id) {
   current?.classList.add("loading");
   try {
     const r = await post("/demo/attack", { script_id: id });
+    if (r.requires_llm && !r.llm_live) {
+      // 降级模式下这条剧本抓不到，硬跑只会显示"两边都损失"的误导结果
+      const notice = [{ stage: "该剧本依赖大模型", actor: "演示台", tone: "warn",
+                        text: r.verdict }];
+      renderTrace($("traceVuln"), notice);
+      renderTrace($("traceDefend"), notice);
+      for (const pillId of ["vulnLoss", "defendLoss"]) {
+        $(pillId).textContent = "未测量";
+        $(pillId).className = "pill warn";
+      }
+      $("verdictBox").hidden = false;
+      $("verdictText").textContent = `未测量　（${r.script.name}）`;
+      $("verdictExpect").textContent = "防御预期：" + r.script.expected;
+      return;
+    }
     renderTrace($("traceVuln"), r.vulnerable.trace);
     renderTrace($("traceDefend"), r.defended.trace);
     $("vulnLoss").textContent = r.vulnerable.lost > 0

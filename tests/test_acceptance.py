@@ -300,10 +300,24 @@ class InjectionDefenseCase(unittest.TestCase):
         for meta in scripts:
             with self.subTest(script=meta["id"]):
                 result = attacks.run_script(meta["id"])
+                if result.get("requires_llm") and not result.get("llm_live"):
+                    # 依赖大模型的剧本在降级模式下抓不到，必须明确标注而不是假装测过
+                    self.assertIsNone(result["vulnerable"])
+                    self.assertIn("依赖大模型", result["verdict"])
+                    continue
                 self.assertGreater(result["vulnerable"]["lost"], 0,
                                    "无防御时应当出现资金损失，否则对比无意义")
                 self.assertEqual(result["defended"]["lost"], 0, "有防御时资金必须零损失")
                 self.assertEqual(result["verdict"], "防御生效：资金零损失")
+
+    def test_llm_only_script_needs_the_model(self):
+        """ATK-13 是关键词库的盲区：降级模式下明确标为未测量。"""
+        self.assertFalse(nlu.llm_available())
+        result = attacks.run_script("ATK-13")
+        self.assertTrue(result["requires_llm"])
+        self.assertFalse(result["llm_live"])
+        self.assertIsNone(result["defended"])
+        self.assertIn("LLM_API_KEY", result["verdict"])
 
     def test_attack_simulation_does_not_pollute_state(self):
         before = bank.ACCOUNTS["E001"]["balance"]
@@ -852,6 +866,383 @@ class FrontendStaticCase(unittest.TestCase):
         block = css.split(".chips .ghost.active")[1].split("}")[0]
         self.assertIn("background", block)
         self.assertIn("--brand-dark", block)
+
+
+class FakeLLMMixin:
+    """把 call_llm 换成可控的假响应，用于验证接入逻辑本身。"""
+
+    def setUp(self):
+        agent.reset_all()
+        self._real_call_llm = nlu.call_llm
+        nlu.call_llm = lambda text, timeout=8.0: None
+
+    def tearDown(self):
+        nlu.call_llm = self._real_call_llm
+
+    def fake_llm(self, intents, fraud=None):
+        nlu.call_llm = lambda text, timeout=8.0: {
+            "intents": intents, "fraud": fraud or {}}
+
+
+class LLMIntegrationCase(FakeLLMMixin, unittest.TestCase):
+    """大模型接入：提示词完整性、双通道仲裁、别名归一化、数字校验。"""
+
+    def test_prompt_declares_every_intent(self):
+        """提示词必须声明全部意图 —— 漏一个，模型就会把这类说法归到别的意图上。"""
+        missing = sorted(nlu.ALL_INTENTS - set(nlu.LLM_INTENTS))
+        self.assertEqual(missing, [], f"提示词缺少意图：{missing}")
+        for name in nlu.LLM_INTENTS:
+            self.assertIn(name, nlu.LLM_SYSTEM_PROMPT)
+
+    def test_rule_parser_wins_over_the_model(self):
+        """模型把定期转账误判成一次性转账时，必须保住定期转账 —— 这是资金行为。"""
+        self.fake_llm([{"intent": "transfer", "payee": "老李"}])
+        intent = nlu.parse_intent("每个月1号给老李转五百块")
+        self.assertEqual(intent.name, "transfer_schedule")
+        self.assertIn("arbitration", intent.slots)
+        payload = agent.create_session(PlanRequest(text="每个月1号给老李转五百块", hour=10))
+        self.assertEqual(payload["plan"]["steps"][0]["tool"], "transfer.schedule")
+
+    def test_model_takes_over_only_for_rule_blind_phrasing(self):
+        self.fake_llm([{"intent": "transfer", "payee": "老李", "amount": 500}])
+        self.assertEqual(
+            nlu.parse_intent_rule("老李住院了，我意思一下五百", "mandarin").name, "unknown",
+            "这句必须是规则解析器的盲区，测试才有意义")
+        payload = agent.create_session(PlanRequest(text="老李住院了，我意思一下五百", hour=10))
+        step = payload["plan"]["steps"][0]
+        self.assertEqual(step["tool"], "transfer.execute")
+        self.assertEqual(step["params"]["payee"], "李建国", "别名应被归一化成实名")
+        self.assertEqual(step["params"]["amount"], 500.0)
+        self.assertEqual(payload["intent"]["source"], "llm")
+
+    def test_unknown_intent_name_is_rejected(self):
+        self.fake_llm([{"intent": "wire_transfer", "payee": "老李"}])
+        self.assertEqual(nlu.parse_intent("老李住院了，我意思一下五百").name, "unknown",
+                         "模型编造的意图名一律视为无效")
+
+    def test_model_amount_must_exist_in_the_utterance(self):
+        """模型可以补金额，但那个数字必须真的出现在原话里。"""
+        self.fake_llm([{"intent": "transfer", "payee": "老李", "amount": 8888}])
+        payload = agent.create_session(PlanRequest(text="老李住院了，我意思一下五百", hour=10))
+        # 8888 不在原话里 → 丢弃；正则也读不出这句里的金额 → 应当回头追问，绝不按 8888 执行
+        self.assertEqual(payload["status"], "clarify")
+        self.assertIn("多少钱", payload["elder_text"])
+        self.assertNotIn("8888", payload["elder_text"])
+
+    def test_model_amount_within_the_utterance_is_accepted(self):
+        self.fake_llm([{"intent": "transfer", "payee": "老李", "amount": 500}])
+        payload = agent.create_session(PlanRequest(text="老李住院了，我意思一下五百", hour=10))
+        self.assertEqual(payload["plan"]["steps"][0]["params"]["amount"], 500.0)
+
+    def test_payee_not_in_utterance_is_discarded(self):
+        self.fake_llm([{"intent": "transfer", "payee": "陈志强", "amount": 500}])
+        payload = agent.create_session(PlanRequest(text="老李住院了，我意思一下五百", hour=10))
+        self.assertEqual(payload["plan"]["steps"][0]["params"]["payee"], "李建国")
+
+    def test_ambiguous_alias_still_asks_for_clarification(self):
+        self.fake_llm([{"intent": "transfer", "payee": "孙子", "amount": 500}])
+        payload = agent.create_session(PlanRequest(text="孙子最近缺钱，给他五百", hour=10))
+        self.assertEqual(payload["status"], "clarify")
+        self.assertEqual({o["name"] for o in payload["options"]}, {"王小龙", "王小虎"})
+
+    def test_llm_failure_falls_back_to_rules(self):
+        nlu.call_llm = lambda text, timeout=8.0: None
+        intent = nlu.parse_intent("给老李转五十块")
+        self.assertEqual((intent.name, intent.source), ("transfer", "rule"))
+
+    def test_call_llm_is_cached_and_cache_clears_on_reset(self):
+        """缓存要打在真正的 call_llm 上，所以替换的是 urlopen 而不是 call_llm 本身。"""
+        import os
+        import urllib.request
+
+        calls = {"n": 0}
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def read(self):
+                content = json.dumps({"intents": [{"intent": "balance_query"}], "fraud": {}})
+                return json.dumps(
+                    {"choices": [{"message": {"content": content}}]}).encode("utf-8")
+
+        def fake_urlopen(req, timeout=None):
+            calls["n"] += 1
+            return FakeResponse()
+
+        nlu.call_llm = self._real_call_llm      # 本用例要测真正的 call_llm，先还原它
+        os.environ["LLM_API_KEY"] = "test-key"
+        real_urlopen = urllib.request.urlopen
+        urllib.request.urlopen = fake_urlopen
+        try:
+            with self.subTest("同一句话只应调用一次模型"):
+                nlu.clear_llm_cache()
+                self.assertEqual(nlu.call_llm("查余额"), nlu.call_llm("查余额"))
+                self.assertEqual(calls["n"], 1)
+            with self.subTest("重置演示数据应当清掉模型缓存"):
+                nlu.clear_llm_cache()
+                nlu.call_llm("查余额")
+                self.assertEqual(calls["n"], 2)
+        finally:
+            urllib.request.urlopen = real_urlopen
+            os.environ.pop("LLM_API_KEY", None)
+
+
+class CompositePlanCase(FakeLLMMixin, unittest.TestCase):
+    """复合指令：一句话多件事，一次确认、风控取最严。"""
+
+    def test_transfer_plus_query_becomes_two_steps(self):
+        self.fake_llm([{"intent": "transfer", "payee": "女儿", "amount": 500},
+                       {"intent": "bill_analysis"}])
+        payload = agent.create_session(PlanRequest(
+            text="给女儿转五百，顺便看看这个月花了多少", hour=10))
+        self.assertEqual([s["tool"] for s in payload["plan"]["steps"]],
+                         ["transfer.execute", "bank.bill_report"])
+        self.assertIn("2件事", payload["elder_text"])
+        # 风控要按最严的那一步定级，不能只看第一步
+        self.assertEqual(payload["risk"]["level"], RiskLevel.L1)
+        self.assertEqual(payload["action"], "confirm_popup")
+
+    def test_two_money_moves_degrade_to_one(self):
+        self.fake_llm([{"intent": "transfer", "payee": "女儿", "amount": 500},
+                       {"intent": "wealth_purchase"}])
+        payload = agent.create_session(PlanRequest(
+            text="给女儿转五百，再帮我买一万块的理财", hour=10))
+        self.assertEqual([s["tool"] for s in payload["plan"]["steps"]], ["transfer.execute"])
+        self.assertIn("一次只办得了一件动钱的事", payload["elder_text"])
+
+    def test_composite_runs_every_step_on_confirm(self):
+        self.fake_llm([{"intent": "transfer", "payee": "女儿", "amount": 500},
+                       {"intent": "bill_analysis"}])
+        payload = agent.create_session(PlanRequest(
+            text="给女儿转五百，顺便看看这个月花了多少", hour=10))
+        done = agent.confirm(payload["session_id"], ConfirmRequest(
+            session_id=payload["session_id"], ack_voice=True, ack_popup=True))
+        self.assertEqual(done["status"], "executed")
+        self.assertEqual(len(done["result"]["steps"]), 2)
+        self.assertIn("已向 张敏 转出 500.00 元", done["elder_text"])
+
+    def test_composite_ticket_binds_the_money_step(self):
+        """复合计划里的授权票据必须绑动资金那一步，不能错绑到只读步骤。"""
+        self.fake_llm([{"intent": "transfer", "payee": "女儿", "amount": 8000},
+                       {"intent": "bill_analysis"}])
+        payload = agent.create_session(PlanRequest(
+            text="给女儿转八千，顺便看看这个月花了多少", hour=10))
+        self.assertEqual(payload["risk"]["level"], RiskLevel.L2)
+        waiting = agent.confirm(payload["session_id"], ConfirmRequest(
+            session_id=payload["session_id"], ack_voice=True, ack_popup=True))
+        ticket = agent.TICKETS[waiting["ticket_id"]]
+        self.assertEqual(ticket.amount, 8000.0)
+        self.assertEqual(ticket.payee, "张敏")
+
+
+class LLMFraudSignalCase(unittest.TestCase):
+    """大模型语义反诈信号：只加不减，且天花板是 L2。"""
+
+    UTTERANCE = "给老李转八百块，是别人让我帮着垫的"
+
+    def test_signal_escalates_benign_looking_transfer_to_l2(self):
+        base = risk.evaluate(amount=800, payee="李建国", hour=14, utterance=self.UTTERANCE)
+        self.assertEqual(base.level, RiskLevel.L1, "关键词库与行为规则都抓不到这句")
+        with_signal = risk.evaluate(
+            amount=800, payee="李建国", hour=14, utterance=self.UTTERANCE,
+            llm_fraud={"score": 0.9, "category": "冒充亲属", "reason": "被第三方指使付款"})
+        self.assertEqual(with_signal.level, RiskLevel.L2)
+        self.assertFalse(with_signal.blocked, "模型信号不能直接阻断资金")
+        self.assertTrue(any("大模型语义判定" in r for r in with_signal.reasons))
+
+    def test_signal_never_goes_above_l2(self):
+        """哪怕模型给满分，也不能越过 L2 —— L3 必须由确定性证据触发。"""
+        decision = risk.evaluate(
+            amount=300, payee="李建国", hour=14, utterance="给老李转三百块",
+            llm_fraud={"score": 1.0, "category": "冒充公检法", "reason": "极可疑"})
+        self.assertEqual(decision.level, RiskLevel.L2)
+        self.assertFalse(decision.blocked)
+
+    def test_signal_never_lowers_an_existing_level(self):
+        decision = risk.evaluate(
+            amount=100, payee="安全账户", hour=14, utterance="给安全账户转一百块",
+            llm_fraud={"score": 0.0, "category": None, "reason": "看着正常"})
+        self.assertEqual(decision.level, RiskLevel.L3)
+        self.assertTrue(decision.blocked)
+
+    def test_below_threshold_signal_is_ignored(self):
+        decision = risk.evaluate(
+            amount=300, payee="李建国", hour=14, utterance="给老李转三百块",
+            llm_fraud={"score": 0.2, "category": None, "reason": "看着正常"})
+        self.assertEqual(decision.level, RiskLevel.L1)
+
+    def test_signal_is_off_when_defense_is_disabled(self):
+        """关闭防御时（攻防演示台的「裸智能体」）模型信号同样不参与。"""
+        decision = risk.evaluate(
+            amount=300, payee="李建国", hour=14, utterance="给老李转三百块",
+            defense_enabled=False,
+            llm_fraud={"score": 1.0, "category": "冒充公检法", "reason": "极可疑"})
+        self.assertEqual(decision.level, RiskLevel.L1)
+
+    def test_llm_only_attack_script_is_marked_and_not_measured_without_llm(self):
+        attacks_names = {s["id"] for s in attacks.list_scripts()}
+        self.assertIn("ATK-13", attacks_names)
+        meta = next(s for s in attacks.list_scripts() if s["id"] == "ATK-13")
+        self.assertTrue(meta["requires_llm"])
+
+
+class EnvFileCase(unittest.TestCase):
+    """密钥文件加载：已存在的环境变量优先，不覆盖。"""
+
+    def test_env_file_is_loaded_but_existing_env_wins(self):
+        import os
+        import tempfile
+
+        from backend import load_env_file
+        with tempfile.TemporaryDirectory() as tmp:
+            env_path = pathlib.Path(tmp) / ".env"
+            env_path.write_text("# 注释行\n\nFROM_FILE='单引号也认'\nALREADY_SET=from_file\n",
+                                encoding="utf-8")
+            os.environ["ALREADY_SET"] = "from_env"
+            try:
+                loaded = load_env_file(env_path)
+                self.assertEqual(os.environ["FROM_FILE"], "单引号也认")
+                self.assertEqual(os.environ["ALREADY_SET"], "from_env", "已存在的环境变量优先")
+                self.assertEqual(loaded, 1, "只应载入未设置过的那一条")
+            finally:
+                os.environ.pop("FROM_FILE", None)
+                os.environ.pop("ALREADY_SET", None)
+
+    def test_missing_env_file_is_not_an_error(self):
+        from backend import load_env_file
+        self.assertEqual(load_env_file(pathlib.Path("不存在的目录/.env")), 0)
+
+    def test_env_example_lists_all_supported_keys(self):
+        example = (ROOT / ".env.example").read_text(encoding="utf-8")
+        for key in ("LLM_BASE_URL", "LLM_API_KEY", "LLM_MODEL",
+                    "XFYUN_APP_ID", "XFYUN_TTS_KEY", "XFYUN_TTS_SECRET"):
+            self.assertIn(key, example)
+
+    def test_env_file_is_gitignored(self):
+        ignore = (ROOT / ".gitignore").read_text(encoding="utf-8")
+        self.assertIn(".env", ignore)
+
+
+class _FakeResponse:
+    def __init__(self, body: bytes):
+        self._body = body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def read(self):
+        return self._body
+
+
+class LLMLiveCase(unittest.TestCase):
+    """把 urlopen 换成脚本化的假模型，端到端验证「大模型在线」这条路。
+
+    假模型只认几条关键话术，其余一律回 unknown —— 足以验证接入链路、复合指令、
+    语义反诈信号与降级回落，不需要真实网络与密钥。
+    """
+
+    # 话术 → (意图, 收款人, 金额, 可疑度)
+    SCRIPTED = {
+        "老李住院了，我意思一下五百": ("transfer", "老李", 500, 0.9),
+        "闺女手头紧，我要帮她凑点": ("transfer", "女儿", 500, 0.4),
+        "给老李转八百块，是别人让我帮着垫的": ("transfer", "老李", 800, 0.9),
+    }
+
+    def setUp(self):
+        import os
+        import urllib.request
+
+        agent.reset_all()
+        self._real_urlopen = urllib.request.urlopen
+        os.environ["LLM_API_KEY"] = "test-key"
+        urllib.request.urlopen = self._fake_urlopen
+
+    def tearDown(self):
+        import os
+        import urllib.request
+
+        urllib.request.urlopen = self._real_urlopen
+        os.environ.pop("LLM_API_KEY", None)
+        nlu.clear_llm_cache()
+        agent.reset_all()
+
+    @classmethod
+    def _fake_urlopen(cls, req, timeout=None):
+        body = json.loads(req.data.decode("utf-8"))
+        text = body["messages"][-1]["content"]
+        answer = {"intents": [{"intent": "unknown"}], "fraud": {"score": 0, "category": None,
+                                                                "reason": ""}}
+        if text in cls.SCRIPTED:
+            name, payee, amount, score = cls.SCRIPTED[text]
+            answer = {"intents": [{"intent": name, "payee": payee, "amount": amount}],
+                      "fraud": {"score": score, "category": "冒充亲属" if score >= 0.6 else None,
+                                "reason": "第三方指使付款" if score >= 0.6 else ""}}
+        # 复合指令：一次返回两件事
+        if "顺便" in text and "转" in text:
+            answer = {"intents": [{"intent": "transfer", "payee": "女儿", "amount": 500},
+                                  {"intent": "bill_analysis"}],
+                      "fraud": {"score": 0, "category": None, "reason": ""}}
+        payload = json.dumps({"choices": [{"message": {"content": json.dumps(answer)}}]})
+        return _FakeResponse(payload.encode("utf-8"))
+
+    def test_paraphrase_set_is_recognised_when_the_model_is_live(self):
+        """规则抓不到的说法，靠模型接住。"""
+        for text in ("老李住院了，我意思一下五百", "闺女手头紧，我要帮她凑点"):
+            with self.subTest(text=text):
+                self.assertEqual(nlu.parse_intent_rule(text, "mandarin").name, "unknown")
+                intent = nlu.parse_intent(text)
+                self.assertEqual(intent.name, "transfer")
+                self.assertEqual(intent.source, "llm")
+
+    def test_model_cannot_invent_an_amount(self):
+        """「闺女手头紧，我要帮她凑点」原话里没有数字 —— 模型也不能凭空补一个。"""
+        payload = agent.create_session(PlanRequest(text="闺女手头紧，我要帮她凑点", hour=10))
+        self.assertEqual(payload["plan"]["steps"][0]["tool"], "contact.ask_amount")
+        self.assertIn("多少钱", payload["elder_text"])
+
+    def test_rule_recognised_transfer_keeps_its_amount(self):
+        payload = agent.create_session(PlanRequest(
+            text="给老李转八百块，是别人让我帮着垫的", hour=10))
+        step = payload["plan"]["steps"][0]
+        self.assertEqual(step["tool"], "transfer.execute")
+        self.assertEqual(step["params"]["amount"], 800.0)
+        self.assertEqual(step["params"]["payee"], "李建国")
+
+    def test_composite_instruction_end_to_end(self):
+        payload = agent.create_session(PlanRequest(
+            text="给女儿转五百，顺便看看这个月花了多少", hour=10))
+        self.assertEqual([s["tool"] for s in payload["plan"]["steps"]],
+                         ["transfer.execute", "bank.bill_report"])
+
+    def test_llm_only_attack_script_is_contained_when_model_is_live(self):
+        result = attacks.run_script("ATK-13")
+        self.assertTrue(result["llm_live"])
+        self.assertGreater(result["vulnerable"]["lost"], 0, "无防御时应当损失")
+        self.assertEqual(result["defended"]["lost"], 0, "有大模型时应当零损失")
+        self.assertEqual(result["defended"]["final_level"], "L2")
+        self.assertEqual(result["verdict"], "防御生效：资金零损失")
+
+    def test_attack_13_utterance_has_no_fraud_keyword(self):
+        """ATK-13 的意义就在于关键词抓不到 —— 用测试把这一点钉住。"""
+        script = next(s for s in attacks.SCRIPTS if s["id"] == "ATK-13")
+        self.assertEqual(risk.detect_fraud(script["victim_utterance"]), [],
+                         "这句必须不含任何反诈关键词，否则演示没有说服力")
+        self.assertEqual(nlu.parse_intent_rule(script["victim_utterance"], "mandarin").name,
+                         "transfer", "但规则解析器要能认出这是一笔转账，否则降级模式下无从对比")
+
+    def test_status_reports_model_and_base_url(self):
+        from backend import main
+        status = main.system_status()
+        self.assertTrue(status["llm_live"])
+        self.assertEqual(status["llm_model"], nlu.llm_config()["model"])
+        self.assertIn("llm_base_url", status)
 
 
 if __name__ == "__main__":

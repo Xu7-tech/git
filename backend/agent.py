@@ -153,8 +153,8 @@ def _merge_with_pending(prev: Intent, text: str) -> Intent | None:
                   speaker=prev.speaker, dialect=prev.dialect, source="rule")
 
 
-def _resolve_intent(req) -> Intent:
-    """决定这一句是「补上一轮缺的信息」还是「一条新指令」。"""
+def _resolve_intents(req) -> tuple[list[Intent], dict]:
+    """决定这一句是「补上一轮缺的信息」还是「一条新指令」，可能拆出多件事。"""
     prev_session = SESSIONS.get(req.session_id) if getattr(req, "session_id", None) else None
     if prev_session and prev_session["status"] == "clarify":
         merged = _merge_with_pending(prev_session["plan"].intent, req.text)
@@ -162,8 +162,8 @@ def _resolve_intent(req) -> Intent:
             audit("intent", req.speaker,
                   f"承接上一轮追问，补入缺失信息后仍是 {merged.name}",
                   utterance=merged.raw_utterance, slots=merged.slots)
-            return merged
-    return nlu.parse_intent(req.text, req.dialect)
+            return [merged], {}
+    return nlu.parse_intents(req.text, req.dialect)
 
 
 def build_plan(intent: Intent) -> Plan:
@@ -370,18 +370,56 @@ def build_plan(intent: Intent) -> Plan:
     return Plan(intent=intent, steps=[], readback="我没太听明白，您能再说一次吗？比如「给女儿转 500 块」。")
 
 
+# 会动资金的工具。复合指令里最多只能有一个 —— 一张授权票据只绑一笔钱。
+FUND_TOOLS = {"transfer.execute", "transfer.schedule", "wealth.purchase", "wealth.redeem"}
+MAX_READONLY_STEPS = 2
+
+
+def _fund_step(plan: Plan) -> PlanStep | None:
+    return next((s for s in plan.steps if s.tool in FUND_TOOLS), None)
+
+
+def build_multi_plan(intents: list[Intent]) -> Plan:
+    """把一句话里的多件事合并成一个计划。
+
+    上限：1 个动资金步骤 + 2 个只读步骤。超出则只办第一件并说明，
+    避免出现"一次确认背后藏着多张授权票据"这种说不清的交互。
+    """
+    plans = [build_plan(i) for i in intents]
+    for single in plans:
+        # 有任何一件需要先澄清，就只办那一件，别把问句夹进复述里
+        if not single.steps or single.steps[0].tool.startswith("contact."):
+            return single
+    fund = [p for p in plans if p.steps[0].tool in FUND_TOOLS]
+    readonly = [p for p in plans if p.steps[0].tool not in FUND_TOOLS][:MAX_READONLY_STEPS]
+    dropped = len(fund) > 1 or len(plans) - len(fund) > MAX_READONLY_STEPS
+    chosen = fund[:1] + readonly
+    if len(chosen) == 1:
+        if dropped:
+            chosen[0].readback += "一次只办得了一件动钱的事，其余的您过会儿再说一次。"
+        return chosen[0]
+    steps = [s for single in chosen for s in single.steps]
+    lines = "；".join(f"第{i}件，{s.summary}" for i, s in enumerate(steps, 1))
+    readback = f"我准备做{len(steps)}件事：{lines}。"
+    readback += "要一起办吗？"
+    return Plan(intent=chosen[0].intent, steps=steps, readback=readback)
+
+
 # --------------------------------------------------------------------------
 # 会话主流程
 # --------------------------------------------------------------------------
 
 
 def create_session(req) -> dict:
-    intent = _resolve_intent(req)
-    audit("intent", req.speaker, f"识别意图 {intent.name}",
+    intents, signal = _resolve_intents(req)
+    intent = intents[0]
+    names = "、".join(i.name for i in intents)
+    audit("intent", req.speaker, f"识别意图 {names}",
           utterance=intent.raw_utterance, dialect=intent.dialect, source=intent.source,
           slots={k: v for k, v in intent.slots.items() if k != "consistency_note"},
-          consistency_note=intent.slots.get("consistency_note"))
-    plan = build_plan(intent)
+          consistency_note=intent.slots.get("consistency_note"),
+          intents=[i.name for i in intents], llm_fraud=signal or None)
+    plan = build_multi_plan(intents)
     audit("plan", "agent", plan.readback,
           steps=[s.tool for s in plan.steps], readback=plan.readback)
 
@@ -396,6 +434,7 @@ def create_session(req) -> dict:
         "voice_ack": False,
         "popup_ack": False,
         "hesitation": 0,
+        "llm_signal": signal,
         "created_at": datetime.now().isoformat(timespec="seconds"),
         "result": None,
     }
@@ -430,8 +469,10 @@ def create_session(req) -> dict:
     return _session_payload(session)
 
 
+_LEVEL_ORDER = {RiskLevel.L0: 0, RiskLevel.L1: 1, RiskLevel.L2: 2, RiskLevel.L3: 3}
+
+
 def _evaluate_plan(session: dict, req) -> RiskDecision:
-    step = session["plan"].steps[0]
     # 用意图携带的原始话语做话术检测：多轮补槽时它是「上一轮｜这一轮」的合并文本，
     # 所以诈骗话术不会因为被拆成两句话就漏检。
     utterance = session["plan"].intent.raw_utterance or req.text
@@ -441,15 +482,27 @@ def _evaluate_plan(session: dict, req) -> RiskDecision:
         for chunk in req.untrusted_context:
             _, hits = risk.sanitize_untrusted(chunk)
             injection_hits.extend(hits)
-        if injection_hits:
-            audit("risk", "rule-engine", "外部字段命中指令型注入，操作被阻断",
-                  injection_hits=injection_hits)
-            return RiskDecision(
-                level=RiskLevel.L3, blocked=True,
-                reasons=["外部数据（商户名/账单描述）中出现指令型注入内容："
-                         + "、".join(injection_hits) + "。外部内容只作为数据，永不作为指令执行"],
-                injection_hits=injection_hits,
-            )
+    if injection_hits:
+        audit("risk", "rule-engine", "外部字段命中指令型注入，操作被阻断",
+              injection_hits=injection_hits)
+        return RiskDecision(
+            level=RiskLevel.L3, blocked=True,
+            reasons=["外部数据（商户名/账单描述）中出现指令型注入内容："
+                     + "、".join(injection_hits) + "。外部内容只作为数据，永不作为指令执行"],
+            injection_hits=injection_hits,
+        )
+    # 复合指令要按最严的那一步定级，不能只看第一步 —— 否则"查个账顺便转五万"就绕过了风控
+    decisions = [_evaluate_step(step, req, utterance, session.get("llm_signal"))
+                 for step in session["plan"].steps]
+    worst = max(decisions, key=lambda d: _LEVEL_ORDER[d.level])
+    if len(decisions) == 1:
+        return worst
+    return RiskDecision(level=worst.level, blocked=worst.blocked,
+                        reasons=[r for d in decisions for r in d.reasons],
+                        limits=worst.limits, injection_hits=worst.injection_hits)
+
+
+def _evaluate_step(step: PlanStep, req, utterance: str, llm_signal: dict | None) -> RiskDecision:
     if step.tool == "wealth.purchase":
         product = next(p for p in bank.WEALTH_PRODUCTS if p["id"] == step.params["product_id"])
         return risk.wealth_gate(product)
@@ -461,6 +514,7 @@ def _evaluate_plan(session: dict, req) -> RiskDecision:
             hour=req.hour, device_trusted=req.device_trusted, voiceprint_ok=req.voiceprint_ok,
             second_speaker=req.second_speaker, utterance=utterance,
             defense_enabled=req.defense_enabled, remark=step.params.get("remark", ""),
+            llm_fraud=llm_signal,
         )
     if step.tool in READ_ONLY_TOOLS:
         return RiskDecision(level=RiskLevel.L0,
@@ -487,10 +541,11 @@ def confirm(session_id: str, req) -> dict:
         audit("confirm", "elder", f"复述确认环节出现犹豫（{session['hesitation']} 次）",
               hesitation_ms=req.hesitation_ms)
         if session["hesitation"] >= 2:
-            step = session["plan"].steps[0]
+            step = _fund_step(session["plan"]) or session["plan"].steps[0]
             upgraded = risk.evaluate(
                 amount=step.params.get("amount", 0), payee=step.params.get("payee", ""),
-                hesitation_count=session["hesitation"], utterance=session["intent"].raw_utterance)
+                hesitation_count=session["hesitation"], utterance=session["intent"].raw_utterance,
+                llm_fraud=session.get("llm_signal"))
             if upgraded.level.value > decision.level.value:
                 session["risk"] = upgraded
                 audit("risk", "rule-engine", f"因反复改口自动升权至 {upgraded.level.value}",
@@ -670,7 +725,8 @@ def _execute_step(step: PlanStep, session: dict) -> dict:
 
 
 def create_ticket(session: dict) -> AuthTicket:
-    step = session["plan"].steps[0]
+    # 票据只能绑动资金的那一步：复合指令里其余步骤是只读的，没有金额与收款人
+    step = _fund_step(session["plan"]) or session["plan"].steps[0]
     amount = float(step.params.get("amount", 0.0))
     ticket = AuthTicket(
         id=f"TK{uuid.uuid4().hex[:8].upper()}",
@@ -936,9 +992,9 @@ def _session_payload(session: dict) -> dict:
     if session["status"] == "executed" and session["result"]:
         # 执行完成后老人端应当看到结果，而不是继续显示操作前的复述文本
         summaries = [s.get("summary", "") for s in session["result"].get("steps", [])]
-        tool = plan.steps[0].tool if plan.steps else ""
+        notify_tools = [s.tool for s in plan.steps if s.tool in CHILD_NOTIFY_TOOLS]
         text = "。".join(s for s in summaries if s)
-        if tool in CHILD_NOTIFY_TOOLS:
+        if notify_tools:
             text += f"。这件事已经同步通知{bank.ACCOUNTS['C001']['owner']}了"
         if text:
             payload["elder_text"] = text
@@ -966,6 +1022,7 @@ def _session_payload(session: dict) -> dict:
 
 def reset_all() -> None:
     bank.reset()
+    nlu.clear_llm_cache()
     SESSIONS.clear()
     TICKETS.clear()
     NOTIFICATIONS.clear()

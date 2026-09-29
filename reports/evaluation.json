@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-09-28T20:36:14",
+  "generated_at": "2026-09-29T22:53:45",
   "environment": {
     "llm": "rule-engine-fallback",
     "asr": "browser-native-stt",
@@ -244,6 +244,13 @@
         "blocked": false,
         "loss_with_defense": 0
       }
+    ],
+    "llm_only_scripts": [
+      {
+        "id": "ATK-13",
+        "name": "关键词盲区的语义诈骗",
+        "note": "依赖大模型，未接入时不计入主口径"
+      }
     ]
   },
   "hallucination_guard": {
@@ -304,6 +311,35 @@
       }
     ]
   },
+  "llm_uplift": {
+    "llm_live": false,
+    "total": 3,
+    "rule_only_accuracy": 0.0,
+    "with_llm_accuracy": null,
+    "cases": [
+      {
+        "utterance": "老李住院了，我意思一下五百",
+        "expected": "transfer",
+        "rule_only": "unknown",
+        "final": "unknown",
+        "pass": false
+      },
+      {
+        "utterance": "闺女手头紧，我要帮她凑点",
+        "expected": "transfer",
+        "rule_only": "unknown",
+        "final": "unknown",
+        "pass": false
+      },
+      {
+        "utterance": "帮我看看上个月是不是被人多扣了",
+        "expected": "subscription_scan",
+        "rule_only": "unknown",
+        "final": "unknown",
+        "pass": false
+      }
+    ]
+  },
   "auth_ticket_security": {
     "overall": 100.0,
     "hit": 8,
@@ -351,9 +387,9 @@
   },
   "latency": {
     "rounds": 200,
-    "p50_ms": 0.069,
-    "p95_ms": 0.229,
-    "max_ms": 0.868,
+    "p50_ms": 0.057,
+    "p95_ms": 0.101,
+    "max_ms": 0.296,
     "note": "当前为降级模式（确定性规则解析器）的本地耗时；接入云端 LLM 后该指标由网络与模型延迟主导。"
   },
   "scenario_coverage": {
@@ -422,5 +458,5 @@
     }
   },
   "scenario_coverage_rate": 100.0,
-  "elapsed_seconds": 0.04
+  "elapsed_seconds": 0.03
 }

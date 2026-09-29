@@ -483,7 +483,7 @@ def slide_metrics(prs):
     ]
     table(s, M, 1.15, CW, rows, [0.26, 0.26, 0.48])
     text(s, M, 6.6, CW, 0.4,
-         [("完整结果见 reports/评测指标结果.md；107 项自动化测试可用 "
+         [("完整结果见 reports/评测指标结果.md；139 项自动化测试可用 "
            "python -m unittest discover -s tests 复现", 12, False, SUB)],
          align=PP_ALIGN.CENTER)
     notes(s, "数字都可复现，现场如被追问，直接跑评测脚本或测试套件。")

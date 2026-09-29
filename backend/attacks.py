@@ -138,12 +138,25 @@ SCRIPTS: list[dict] = [
         "hour": 2, "second_speaker": False, "voiceprint_ok": True,
         "expected": "未命中任何话术，纯行为异常（深夜 + 新增收款人 + 大额）升权至 L2，转子女授权",
     },
+    {
+        "id": "ATK-13", "name": "关键词盲区的语义诈骗", "category": "语义反诈", "channel": "电话",
+        "attacker_lines": [
+            "（这段话术里没有任何一个反诈关键词，特征库比对抓不到）",
+            "对方说：你朋友老李有急事，你先替他垫八百，回头他还你。",
+            "对方还说：这事你别跟孩子讲，说了他们就不同意了。",
+        ],
+        "victim_utterance": "给老李转八百块，是别人让我帮着垫的",
+        "hour": 14, "second_speaker": False, "voiceprint_ok": True,
+        "requires_llm": True,
+        "expected": "关键词库抓不到；大模型语义判定可疑后升权至 L2、转子女授权，资金零损失",
+    },
 ]
 
 
 def list_scripts() -> list[dict]:
     return [{"id": s["id"], "name": s["name"], "category": s["category"],
-             "channel": s["channel"], "expected": s["expected"]} for s in SCRIPTS]
+             "channel": s["channel"], "expected": s["expected"],
+             "requires_llm": bool(s.get("requires_llm"))} for s in SCRIPTS]
 
 
 @contextlib.contextmanager
@@ -259,6 +272,15 @@ def run_script(script_id: str) -> dict:
     script = next((s for s in SCRIPTS if s["id"] == script_id), None)
     if script is None:
         return {"error": f"未找到剧本 {script_id}"}
+    # 依赖大模型的剧本在降级模式下抓不到，硬跑只会得到"两边都损失"的误导结果 ——
+    # 直接说清楚，并告诉评审接上模型后能看到什么。
+    if script.get("requires_llm") and not nlu.llm_available():
+        return {
+            "script": {**script}, "requires_llm": True, "llm_live": False,
+            "vulnerable": None, "defended": None,
+            "verdict": "该剧本依赖大模型：关键词库抓不到这类话术，"
+                       "配置 LLM_API_KEY 后可看到「升权至 L2、资金零损失」的对比",
+        }
     # 两侧各自独立快照：有防御的一侧必须看到未被消耗的初始账户状态，
     # 否则升权理由里会出现"余额被上一轮转空"这种误导性描述。
     with _isolated_bank():
@@ -268,4 +290,5 @@ def run_script(script_id: str) -> dict:
     verdict = ("防御生效：资金零损失" if defended["lost"] == 0 and vulnerable["lost"] > 0
                else "需人工复核")
     return {"script": {**script}, "vulnerable": vulnerable, "defended": defended,
-            "verdict": verdict}
+            "verdict": verdict, "requires_llm": bool(script.get("requires_llm")),
+            "llm_live": nlu.llm_available()}

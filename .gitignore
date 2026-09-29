@@ -5,6 +5,10 @@ venv/
 .idea/
 .vscode/
 
+# 密钥文件：只入库 .env.example 模板
+.env
+.env.local
+
 # 交付压缩包与 PPT 导出的临时预览图，不进仓库
 *.zip
 deliverables/_ppt_preview/

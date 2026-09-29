@@ -156,6 +156,9 @@ class HttpSmokeCase(unittest.TestCase):
         for meta in scripts:
             with self.subTest(script=meta["id"]):
                 r = self.post("/demo/attack", {"script_id": meta["id"]})
+                if r.get("requires_llm") and not r.get("llm_live"):
+                    self.assertIsNone(r["vulnerable"])
+                    continue
                 self.assertGreater(r["vulnerable"]["lost"], 0)
                 self.assertEqual(r["defended"]["lost"], 0)
 

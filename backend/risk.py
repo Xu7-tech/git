@@ -11,6 +11,7 @@ from .schemas import RiskDecision, RiskLevel
 
 AUTH_THRESHOLD = 2000.0      # 超过此金额进入子女授权
 ACTIVE_HOURS = (7, 22)       # 非活跃时段自动升权（老人被骗高发时段在深夜）
+LLM_FRAUD_THRESHOLD = 0.6    # 大模型语义反诈信号的触发阈值
 
 FRAUD_PATTERNS: list[tuple[str, tuple[str, ...]]] = [
     ("冒充公检法", ("公安局", "公安", "检察院", "法院", "安全账户", "涉案", "洗钱",
@@ -75,6 +76,7 @@ def evaluate(
     defense_enabled: bool = True,
     limits: dict | None = None,
     remark: str = "",
+    llm_fraud: dict | None = None,
 ) -> RiskDecision:
     limits = limits or bank.LIMITS["E001"]
     info = bank.payee_info(payee) if payee else None
@@ -139,6 +141,17 @@ def evaluate(
         l2_reasons.append("您在确认环节反复改口，系统自动提升权限等级")
     if defense_enabled and fraud_hits:
         l2_reasons.append("对话内容命中风险话术：" + "、".join(fraud_hits))
+    # 大模型语义反诈信号：只加不减，且天花板就是这里（L2）。
+    # L3 硬阻断仍然只由确定性证据触发，模型误判不会把钱直接锁死。
+    score = float((llm_fraud or {}).get("score") or 0)
+    if defense_enabled and score >= LLM_FRAUD_THRESHOLD:
+        category = (llm_fraud or {}).get("category")
+        reason = str((llm_fraud or {}).get("reason") or "").strip()
+        l2_reasons.append(
+            f"大模型语义判定这句话疑似诈骗（可疑度 {score:.2f}"
+            + (f"，类别：{category}" if category else "")
+            + "）" + (f"：{reason}" if reason else "")
+            + "。自动升权，请子女确认")
 
     if l2_reasons:
         return RiskDecision(level=RiskLevel.L2, reasons=l2_reasons,
